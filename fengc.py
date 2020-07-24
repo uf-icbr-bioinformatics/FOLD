@@ -18,6 +18,72 @@ Computation performed according to Varley et al., see: http://basic.northwestern
     else:
         return 100.5 + (41.0 * gc / length) - (820.0 / length) + p
 
+# Reverse complement
+
+BASES = {'A': 'T', 'C': 'G', 'G': 'C', 'T': 'A', 'N': 'N'}
+
+def revcomp(s):
+    bases = [ BASES[b.upper()] for b in s[::-1] ]
+    return "".join(bases)
+
+# Number of GC bases in a sequence
+
+def ngc(seq):
+    return seq.count("C") + seq.count("G")
+
+# Find optimal oligo length in a sequence giving MT as close as possible to 65 degrees
+
+def findOptimalMT(seq, start, direction, minlen, maxlen):
+    bestlen = 0
+    bestmt = 100
+    delta = 100
+    for l in range(minlen, maxlen):
+        if direction == 1:
+            oligo = seq[start:start+l] ## TODO: optimize - we just need to look at the base being added
+        else:
+            oligo = seq[start-l+1:start+1]
+        gc = ngc(oligo)
+        gcperc = 1.0 * gc / l
+
+        # We want GC% between 40 and 65
+        if gcperc < 0.4 or gcperc > 0.65:
+            continue
+
+        # Compute MT
+        thismt = mt(gc, l)
+
+        # If we're closer to 65 than the current best, keep this
+        if abs(thismt-65) < delta:
+            bestlen = l
+            bestmt = thismt
+            delta = abs(thismt-65)
+
+    return Oligo(seq, start, direction, bestlen, bestmt)
+
+# Oligo
+
+class Oligo(object):
+    start = 0
+    end = 0
+    length = 0
+    gc = 0
+    gcperc = 0.0
+    mt = 0
+    sequence = ""
+    
+    def __init__(self, seq, start, direction, bestlen, bestmt):
+        if direction == 1:
+            self.start = start
+            self.end = start + bestlen - 1
+        else:
+            self.start = start - bestlen + 1
+            self.end = start
+        self.length = bestlen
+        self.mt = bestmt
+        self.sequence = seq[self.start:self.end+1]
+        self.gc = ngc(self.sequence)
+        self.gcperc = 1.0 * self.gc / self.length
+
 # Extracting sequences for regions
 
 class Sequence(object):
@@ -27,6 +93,17 @@ class Sequence(object):
     def __init__(self, name, seq):
         self.name = name
         self.seq = seq
+
+    def write(self, filename):
+        with open(filename, "w") as out:
+            out.write(">{}\n{}\n".format(self.name, self.seq))
+
+    def findVT(self):
+        positions = []
+        for i in range(1, len(self.seq)):
+            if self.seq[i] == 'T' and self.seq[i-1] != 'T':
+                positions.append(i)
+        return positions
 
 class SequenceManager(object):
     reference = None
@@ -41,8 +118,8 @@ class SequenceManager(object):
             proc.stdin.write("{}\t{}\t{}\n".format(intv[0], intv[1], intv[2]))
         proc.stdin.close()
         for _ in intervals:
-            name = proc.stdout.readline()
-            seq = proc.stdout.readline()
+            name = proc.stdout.readline().rstrip("\n")
+            seq = proc.stdout.readline().rstrip("\n")
             seqs.append(Sequence(name, seq))
         return seqs
 
@@ -71,7 +148,8 @@ class GTFParser(object):
         return None
 
     def load(self):
-        sys.stderr.write("Loading genes from GTF file {}...".format(self.filename))
+        sys.stderr.write("Loading genes from GTF file {}: \x1b[s".format(self.filename))
+        n = 0
         with open(self.filename, "r") as f:
             c = csv.reader(f, delimiter='\t')
             for line in c:
@@ -86,7 +164,10 @@ class GTFParser(object):
                 name = self.getName(line[8])
                 if name:
                     self.genes[name] = [chrom, start, end, strand]
-        sys.stderr.write(" done, {} genes loaded.\n".format(len(self.genes)))
+                    n += 1
+                    if n % 5000 == 0:
+                        sys.stderr.write("\x1b[u{}".format(n))
+        sys.stderr.write("\x1b[u{} genes loaded.\n".format(len(self.genes)))
 
     def get(self, name):
         return self.genes[name] if name in self.genes else None
@@ -108,16 +189,23 @@ class GFFParser(GTFParser):
 class Main(object):
     genelist = None
     genes = []
+    sequences = []              # List of Sequence objects
     outfile = "/dev/stdout"
     reference = ""
     seqman = None
+    toFasta = False
+
     upstream = 400
     downstream = 100
     field = 2000
-    toFasta = False
+    minlength = 8
+    maxlength = 30
+    minmt = 62
+    maxmt = 68
 
     def __init__(self):
         self.genes = []
+        self.sequences = []
 
     def parseArgs(self, args):
         if "-h" in args or "--help" in args:
@@ -206,18 +294,16 @@ Options:
                     gcoords.append([coords[0], coords[1] - self.upstream - self.field, coords[1] + self.downstream + self.field, coords[3]])
                 else:
                     gcoords.append([coords[0], coords[2] - self.downstream - self.field, coords[2] + self.upstream + self.field, coords[3]])
-                sys.stderr.write("{:30} {}:{}-{}:{}\n".format(g, coords[0], coords[1], coords[2], coords[3]))
+                sys.stderr.write("{:20} {}:{}-{}:{}\n".format(g, coords[0], coords[1], coords[2], coords[3]))
 
-        seqs = self.seqman.getSequences(gcoords)
+        self.sequences = self.seqman.getSequences(gcoords)
         for i in range(len(gnames)):
-            seq = seqs[i]
+            seq = self.sequences[i]
             if gcoords[i][3] == '-':
-                ## TODO: reverse-complement sequence
-                pass
+                seq.seq = revcomp(seq.seq)
             seq.name = gnames[i] + " " + seq.name[1:]
             if self.toFasta:
-                with open(gnames[i] + ".fa", "w") as out:
-                    out.write(">{}{}".format(seq.name, seq.seq))
+                seq.write(gnames[i] + ".fa")
 
 ### Let's get things started
 
