@@ -5,6 +5,11 @@ import csv
 import os.path
 import subprocess as sp
 
+# Constants
+
+U1 = "ATCACCAACTACCCACACACACC"
+U2 = "CTACCCCACCTTCCTCATTCTCT"
+
 ## Utilities
 
 # MT calculation
@@ -23,7 +28,7 @@ Computation performed according to Varley et al., see: http://basic.northwestern
 BASES = {'A': 'T', 'C': 'G', 'G': 'C', 'T': 'A', 'N': 'N'}
 
 def revcomp(s):
-    bases = [ BASES[b.upper()] for b in s[::-1] ]
+    bases = [ BASES[b] for b in s[::-1] ]
     return "".join(bases)
 
 # Number of GC bases in a sequence
@@ -111,15 +116,19 @@ class Oligo(object):
 class Sequence(object):
     name = ""
     seq = ""
+    chrom = ""
+    start = 0
+    end = 0
+    strand = ""
     extra = None
 
     def __init__(self, name, seq):
         self.name = name
         self.seq = seq
 
-    def write(self, filename):
+    def write(self, filename, label=None):
         with open(filename, "w") as out:
-            out.write(">{}\n{}\n".format(self.name, self.seq))
+            out.write(">{}\n{}\n".format(label or self.name, self.seq))
 
     def findVT(self):
         positions = []
@@ -140,10 +149,15 @@ class SequenceManager(object):
         for intv in intervals:
             proc.stdin.write("{}\t{}\t{}\n".format(intv[0], intv[1], intv[2]))
         proc.stdin.close()
-        for _ in intervals:
+        for intv in intervals:
             name = proc.stdout.readline().rstrip("\n")
-            seq = proc.stdout.readline().rstrip("\n")
-            seqs.append(Sequence(name, seq))
+            seq = proc.stdout.readline().rstrip("\n").upper()
+            s = Sequence(name, seq)
+            s.chrom = intv[0]
+            s.start = intv[1]
+            s.end   = intv[2]
+            s.strand = intv[3]
+            seqs.append(s)
         return seqs
 
 # Simple GTF parser
@@ -305,14 +319,43 @@ class Main(object):
             sys.stderr.write("Error: please specify genome reference file with -r option.\n")
             return False
 
-    def banner(self):
-        sys.stdout.write("""\x1b[1;36m***************************************************
+    def banner(self, out):
+        out.write("""\x1b[1;36m***************************************************
 * fengc.py - design primers for FENGC experiments *
 ***************************************************\x1b[0m
 """)
 
-    def usage(self, what=None):
-        sys.stdout.write("""
+    def usage(self, args=[]):
+        self.banner(sys.stdout)
+        if "weight" in args:
+            sys.stdout.write("""\x1b[1mOptimization weights:\x1b[0m
+
+This program tests all possible pairs of candidate oligos at the 5' and 3'
+end of the target sequence, assigning each pair a score, and selects the
+pair with the optimal score. The score is the sum of four components:
+
+  A. Absolute difference between MT for Oligo 1 and 65.
+  B. Absolute difference between MT for Oligo 2 and 65.
+  C. Absolute difference between MT for Oligo 1 and MT for Oligo 2.
+  D. Distance between start of Oligo1 and start of Oligo2.
+
+The first three components are multiplied by weight `wm', while D is multiplied
+by `wl' if it is larger than the desired target sequence, or by `ws' if it is
+smaller. The results are added together to generate the final score.
+
+Higher weights mean that the corresponding component has more impact on the choice
+of the optimal pair, while a weight of 0 means that the corresponding component
+has no impact. Examples:
+
+* To select oligos based only on the size of the amplified region, ignoring the MT,
+  use `-wm 0'.
+
+* To avoid producing an amplified region shorter than the desired one, use `-ws 1000'
+  (or any other very large number).
+
+""")
+        else:
+            sys.stdout.write("""
 \x1b[1mUsage: fengc.py [options] genesdb genes...\x1b[0m
 
 where `genesdb' is a gene database in GFT or GFF format, and `genes' is one or
@@ -367,17 +410,32 @@ more gene names, or (if preceded by @) a file containing gene names, one per lin
             seq = self.sequences[i]
             if gcoords[i][3] == '-':
                 seq.seq = revcomp(seq.seq)
-            seq.name = gnames[i] + " " + seq.name[1:]
+            seq.name = gnames[i]
             if self.toFasta:
-                seq.write(gnames[i] + ".fa")
+                seq.write(gnames[i] + ".fa", label=gnames[i] + " " + seq.name[1:])
             best = self.findOptimalOligos(seq, regstart, regend)
             seq.extra = best
             sys.stderr.write("  {:20}{}bp   {:.1f}  {}%   {:.1f}  {}%   {:.1f}  {}%\n".format(
-                gnames[i], best[1].start - best[0].end, 
+                gnames[i], best[1].start - best[0].start, 
                 best[0].mt, int(100*best[0].gcperc), 
                 best[1].mt, int(100*best[1].gcperc), 
                 best[2].mt, int(100*best[2].gcperc)))
-        sys.stderr.write("\n\x1b[1mWriting output::\x1b[0m\n")
+        sys.stderr.write("\n\x1b[1mWriting output:\x1b[0m\n")
+        self.writeOutput()
+
+    def writeOutput(self):
+        sys.stderr.write("\n  Writing oligo information for {} genes to {}.\n".format(len(self.sequences), self.outfile))
+        with open(self.outfile, "w") as out:
+            out.write("Gene\tOrientation\tGenomic coordinates\tPCR Product Size\tO1-sequence\tO1-length\tO1-MT\tO1-GC%\tO2-sequence\tO2-length\tO2-MT\tO2-GC%\tO3-sequence\tO3-length\tO3-MT\tO3-GC%\n")
+            for i in range(len(self.sequences)):
+                seq = self.sequences[i]
+                [o1, o2, o3] = seq.extra
+                out.write("{}\t{}\t{}:{:,}-{:,}\t{}\t{}\t{}\t{:.1f}\t{}\t{}\t{}\t{:.1f}\t{}\t{}\t{}\t{:.1f}\t{}\n".format(
+                    seq.name, "F" if seq.strand == "+" else "R", seq.chrom, seq.start, seq.end,
+                    o2.start - o1.start,
+                    revcomp(o1.sequence)+U1, len(o1.sequence), o1.mt, int(100*o1.gcperc),
+                    revcomp(o2.sequence)+U1, len(o2.sequence), o2.mt, int(100*o2.gcperc),
+                    revcomp(o3.sequence)+U2, len(o3.sequence), o3.mt, int(100*o3.gcperc)))
 
     def findOptimalOligos(self, seq, regstart, regend):
         positions = seq.findVT()
@@ -407,7 +465,7 @@ more gene names, or (if preceded by @) a file containing gene names, one per lin
         s1 = (a.mt - 65)**2
         s2 = (a.mt - 65)**2
         s3 = (a.mt - b.mt)**2
-        size = b.start - a.end - self.regsize
+        size = b.start - a.start - self.regsize
         if size > 0:
             s4 = self.weightlen1 * size**2
         else:
@@ -419,8 +477,8 @@ more gene names, or (if preceded by @) a file containing gene names, one per lin
 if __name__ == "__main__":
     args = sys.argv[1:]
     M = Main()
-    M.banner()
     if M.parseArgs(args):
+        M.banner(sys.stderr)
         M.run()
     else:
         M.usage(args)
