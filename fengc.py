@@ -32,8 +32,10 @@ def ngc(seq):
     return seq.count("C") + seq.count("G")
 
 # Find optimal oligo length in a sequence giving MT as close as possible to 65 degrees
+# Returns an Oligo object
 
 def findOptimalMT(seq, start, direction, minlen, maxlen):
+    # print (start, direction, minlen, maxlen)
     bestlen = 0
     bestmt = 100
     delta = 100
@@ -58,7 +60,26 @@ def findOptimalMT(seq, start, direction, minlen, maxlen):
             bestmt = thismt
             delta = abs(thismt-65)
 
-    return Oligo(seq, start, direction, bestlen, bestmt)
+    if bestmt < 100:
+        return Oligo(seq, start, direction, bestlen, bestmt)
+    else:
+        return None
+
+# Find candidate positions to test
+
+def findCandidatePositions(positions, howmany, start, direction):
+    """Return `howmany' positions from the list of positions starting at `start' in direction `direction'
+(1 = left to right, -1 = right to left)."""
+    
+    # Find first position after `start'
+    for i in range(len(positions)):
+        if positions[i] >= start:
+            break
+    if direction == 1:
+        return positions[i:i+howmany]
+    else:
+        p = max(i-howmany, 0)
+        return positions[p:i]
 
 # Oligo
 
@@ -72,6 +93,7 @@ class Oligo(object):
     sequence = ""
     
     def __init__(self, seq, start, direction, bestlen, bestmt):
+        #print (start, direction, bestlen, bestmt)
         if direction == 1:
             self.start = start
             self.end = start + bestlen - 1
@@ -89,6 +111,7 @@ class Oligo(object):
 class Sequence(object):
     name = ""
     seq = ""
+    extra = None
 
     def __init__(self, name, seq):
         self.name = name
@@ -197,11 +220,19 @@ class Main(object):
 
     upstream = 400
     downstream = 100
+    regsize = 500
     field = 2000
     minlength = 8
     maxlength = 30
     minmt = 62
     maxmt = 68
+
+    ncandout = 40               # Number of candidates to consider outside of target region
+    ncandin = 10                # Number of candidates to consider inside of target region
+
+    weightmt = 1.0              # Weight of MT in score
+    weightlen1 = 1.0            # Weight of region length in score (if larger than regsize)
+    weightlen2 = 1.0            # Weight of region length in score (if smaller than regsize)
 
     def __init__(self):
         self.genes = []
@@ -209,7 +240,7 @@ class Main(object):
 
     def parseArgs(self, args):
         if "-h" in args or "--help" in args:
-            return self.usage()
+            return False
         prev = ""
         for a in args:
             if prev == "-o":
@@ -227,10 +258,23 @@ class Main(object):
             elif prev == "-d":
                 self.downstream = int(a)
                 prev = ""
-            elif prev == "-w":
+            elif prev == "-s":
                 self.field = int(a)
                 prev = ""
-            elif a in ["-o", "-r", "-u", "-d", "-w"]:
+            elif prev == "-wm":
+                self.weightmt = float(a)
+                prev = ""
+            elif prev == "-wl":
+                self.weightlen1 = float(a)
+                prev = ""
+            elif prev == "-ws":
+                self.weightlen2 = float(a)
+                prev = ""
+            elif prev == "-w":
+                self.weightlen1 = float(a)
+                self.weightlen2 = float(a)
+                prev = ""
+            elif a in ["-o", "-r", "-u", "-d", "-s", "-wm", "-wl", "-ws", "-w"]:
                 prev = a
             elif a == "-f":
                 self.toFasta = True
@@ -261,31 +305,47 @@ class Main(object):
             sys.stderr.write("Error: please specify genome reference file with -r option.\n")
             return False
 
-    def usage(self):
-        sys.stdout.write("""fengc.py - design primers for FENGC experiments.
+    def banner(self):
+        sys.stdout.write("""\x1b[1;36m***************************************************
+* fengc.py - design primers for FENGC experiments *
+***************************************************\x1b[0m
+""")
 
-Usage: fengc.py [options] genesdb genes...
+    def usage(self, what=None):
+        sys.stdout.write("""
+\x1b[1mUsage: fengc.py [options] genesdb genes...\x1b[0m
 
 where `genesdb' is a gene database in GFT or GFF format, and `genes' is one or
 more gene names, or (if preceded by @) a file containing gene names, one per line.
 
-Options:
+\x1b[1mGeneral options:\x1b[0m
 
   -r R | Specify location of genome reference file (required).
   -o O | Write output to file O (default: standard output).
   -f   | Write target sequences to FASTA files.
 
+\x1b[1mDesign options:\x1b[0m
+
   -u U | Number of bp upstream of TSS (default: {}).
   -d D | Number of bp downstream of TSS (default: {}).
-  -w W | Number of bp upstream/downstream of regions of interest (default: {}).
+  -s S | Number of bp upstream/downstream of regions of interest (default: {}).
 
-""".format(self.upstream, self.downstream, self.field))
+\x1b[1mWeight options (see -h weight for details):\x1b[0m
+
+  -wm W | Set weight for MT penalty (default: {}).
+  -wl W | Set weight for region length when larger than target (default: {}).
+  -ws W | Set weight for region length when smaller than target (default: {}).
+  -w  W | Set both -wl and -ws to W.
+
+""".format(self.upstream, self.downstream, self.field, self.weightmt, self.weightlen1, self.weightlen2))
         return False
 
     def run(self):
         gnames = []
         gcoords = []
+        self.regsize  = self.upstream + self.downstream # Size of target region
 
+        sys.stderr.write("\n\x1b[1mLoading target sequences:\x1b[0m\n")
         for g in self.genes:
             coords = self.genelist.get(g)
             if coords:
@@ -294,9 +354,15 @@ Options:
                     gcoords.append([coords[0], coords[1] - self.upstream - self.field, coords[1] + self.downstream + self.field, coords[3]])
                 else:
                     gcoords.append([coords[0], coords[2] - self.downstream - self.field, coords[2] + self.upstream + self.field, coords[3]])
-                sys.stderr.write("{:20} {}:{}-{}:{}\n".format(g, coords[0], coords[1], coords[2], coords[3]))
+                sys.stderr.write("  {:20} {}:{}-{}:{}\n".format(g, coords[0], coords[1], coords[2], coords[3]))
 
         self.sequences = self.seqman.getSequences(gcoords)
+
+        sys.stderr.write("\n\x1b[1mFinding oligos:\x1b[0m\n")
+        sys.stderr.write("  \x1b[4mGene\x1b[0m                \x1b[4mSize\x1b[0m    \x1b[4m Oligo 1 \x1b[0m   \x1b[4m Oligo 2 \x1b[0m   \x1b[4m Oligo 3 \x1b[0m\n")
+        sys.stderr.write("                              MT    %GC   MT    %GC   MT    %GC\n")
+        regstart = self.field                # Start of target region
+        regend   = self.field + self.regsize # End of target region
         for i in range(len(gnames)):
             seq = self.sequences[i]
             if gcoords[i][3] == '-':
@@ -304,16 +370,60 @@ Options:
             seq.name = gnames[i] + " " + seq.name[1:]
             if self.toFasta:
                 seq.write(gnames[i] + ".fa")
+            best = self.findOptimalOligos(seq, regstart, regend)
+            seq.extra = best
+            sys.stderr.write("  {:20}{}bp   {:.1f}  {}%   {:.1f}  {}%   {:.1f}  {}%\n".format(
+                gnames[i], best[1].start - best[0].end, 
+                best[0].mt, int(100*best[0].gcperc), 
+                best[1].mt, int(100*best[1].gcperc), 
+                best[2].mt, int(100*best[2].gcperc)))
+        sys.stderr.write("\n\x1b[1mWriting output::\x1b[0m\n")
+
+    def findOptimalOligos(self, seq, regstart, regend):
+        positions = seq.findVT()
+        pos1 = findCandidatePositions(positions, self.ncandout, regstart, -1) + findCandidatePositions(positions, self.ncandin, regstart, 1)
+        pos1.sort(key=lambda p: abs(regstart - p))
+        pos2 = findCandidatePositions(positions, self.ncandout, regend, 1) + findCandidatePositions(positions, self.ncandin, regend, -1)
+        pos2.sort(key=lambda p: abs(regend - p))
+        oligos1 = [ findOptimalMT(seq.seq, start, 1, self.minlength, self.maxlength) for start in pos1 ]
+        oligos2 = [ findOptimalMT(seq.seq, start, 1, self.minlength, self.maxlength) for start in pos2 ]
+
+        # Find best pair
+        best = None
+        bestscore = 1e6
+        for a in oligos1:
+            for b in oligos2:
+                if a and b:
+                    # See if we can find Oligo3
+                    c = findOptimalMT(seq.seq, b.start, -1, self.minlength, self.maxlength)
+                    if c:
+                        score = self.score(a, b)
+                        if score < bestscore:
+                            bestscore = score
+                            best = [a, b, c]
+        return best
+
+    def score(self, a, b):
+        s1 = (a.mt - 65)**2
+        s2 = (a.mt - 65)**2
+        s3 = (a.mt - b.mt)**2
+        size = b.start - a.end - self.regsize
+        if size > 0:
+            s4 = self.weightlen1 * size**2
+        else:
+            s4 = self.weightlen2 * size**2
+        return self.weightmt*(s1 + s2 + s3) + s4
 
 ### Let's get things started
 
 if __name__ == "__main__":
     args = sys.argv[1:]
     M = Main()
+    M.banner()
     if M.parseArgs(args):
         M.run()
     else:
-        M.usage()
+        M.usage(args)
 
 ### Test with:
 
