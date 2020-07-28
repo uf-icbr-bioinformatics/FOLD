@@ -3,6 +3,8 @@
 import sys
 import csv
 import os.path
+import random
+from numpy import var
 import subprocess as sp
 
 # Constants
@@ -11,6 +13,14 @@ U1 = "ATCACCAACTACCCACACACACC"
 U2 = "CTACCCCACCTTCCTCATTCTCT"
 
 ## Utilities
+
+# Check that bedtools is available
+
+def checkBedtools():
+    try:
+        return sp.check_output("bedtools --version", shell=True, stderr=sp.STDOUT).strip()
+    except sp.CalledProcessError:
+        return False
 
 # MT calculation
 
@@ -65,7 +75,7 @@ def findOptimalMT(seq, start, direction, minlen, maxlen):
             bestmt = thismt
             delta = abs(thismt-65)
 
-    if bestmt < 100:
+    if 60 <= bestmt < 70:
         return Oligo(seq, start, direction, bestlen, bestmt)
     else:
         return None
@@ -111,6 +121,23 @@ class Oligo(object):
         self.gc = ngc(self.sequence)
         self.gcperc = 1.0 * self.gc / self.length
 
+# Triple of oligos
+
+class Triple(object):
+    oligo1 = None
+    oligo2 = None
+    oligo3 = None
+    size = 0
+    tmspread = 100
+    score = 1000
+
+    def __init__(self, o1, o2, o3):
+        self.oligo1 = o1
+        self.oligo2 = o2
+        self.oligo3 = o3
+        self.size = o2.start - o1.start + 1
+        self.tmspread = max(o1.mt, o2.mt, o3.mt) - min(o1.mt, o2.mt, o3.mt)
+
 # Extracting sequences for regions
 
 class Sequence(object):
@@ -120,11 +147,14 @@ class Sequence(object):
     start = 0
     end = 0
     strand = ""
-    extra = None
+    triples = []
+    rndtriple = None            # One triple picked at random
+    best = None                 # Best triple found so far
 
     def __init__(self, name, seq):
         self.name = name
         self.seq = seq
+        self.triples = []
 
     def write(self, filename, label=None):
         with open(filename, "w") as out:
@@ -136,6 +166,10 @@ class Sequence(object):
             if self.seq[i] == 'T' and self.seq[i-1] != 'T':
                 positions.append(i)
         return positions
+
+    def randomTriple(self):
+        self.rndtriple = random.choice(self.triples)
+        return self.rndtriple
 
 class SequenceManager(object):
     reference = None
@@ -231,6 +265,7 @@ class Main(object):
     reference = ""
     seqman = None
     toFasta = False
+    local = False               # If true, skips global optimization.
 
     upstream = 400
     downstream = 100
@@ -243,6 +278,8 @@ class Main(object):
 
     ncandout = 40               # Number of candidates to consider outside of target region
     ncandin = 10                # Number of candidates to consider inside of target region
+    maxtriples = 100            # Maximum number of triples to keep for each target (sorted by best score)
+    nrounds = 1000000              # Rounds of global optimization
 
     weightmt = 1.0              # Weight of MT in score
     weightlen1 = 1.0            # Weight of region length in score (if larger than regsize)
@@ -292,6 +329,8 @@ class Main(object):
                 prev = a
             elif a == "-f":
                 self.toFasta = True
+            elif a == "-l":
+                self.local = True
             elif self.genelist is None:
                 ext = os.path.splitext(a)[1]
                 if ext in [".gtf", ".GTF"]:
@@ -334,9 +373,9 @@ This program tests all possible pairs of candidate oligos at the 5' and 3'
 end of the target sequence, assigning each pair a score, and selects the
 pair with the optimal score. The score is the sum of four components:
 
-  A. Absolute difference between MT for Oligo 1 and 65.
-  B. Absolute difference between MT for Oligo 2 and 65.
-  C. Absolute difference between MT for Oligo 1 and MT for Oligo 2.
+  A. Absolute difference between Tm for Oligo 1 and 65.
+  B. Absolute difference between Tm for Oligo 2 and 65.
+  C. Absolute difference between Tm for Oligo 1 and Tm for Oligo 2.
   D. Distance between start of Oligo1 and start of Oligo2.
 
 The first three components are multiplied by weight `wm', while D is multiplied
@@ -375,7 +414,7 @@ more gene names, or (if preceded by @) a file containing gene names, one per lin
 
 \x1b[1mWeight options (see -h weight for details):\x1b[0m
 
-  -wm W | Set weight for MT penalty (default: {}).
+  -wm W | Set weight for Tm penalty (default: {}).
   -wl W | Set weight for region length when larger than target (default: {}).
   -ws W | Set weight for region length when smaller than target (default: {}).
   -w  W | Set both -wl and -ws to W.
@@ -399,9 +438,9 @@ more gene names, or (if preceded by @) a file containing gene names, one per lin
                     gcoords.append([coords[0], coords[2] - self.downstream - self.field, coords[2] + self.upstream + self.field, coords[3]])
                 sys.stderr.write("  {:20} {}:{}-{}:{}\n".format(g, coords[0], coords[1], coords[2], coords[3]))
 
-        self.sequences = self.seqman.getSequences(gcoords)
+        self.sequences = self.seqman.getSequences(gcoords) # This will be a list of Sequence objects
 
-        sys.stderr.write("\n\x1b[1mFinding oligos:\x1b[0m\n")
+        sys.stderr.write("\n\x1b[1mFinding oligo triples - best triple for each sequence:\x1b[0m\n")
         sys.stderr.write("  \x1b[4mGene\x1b[0m                \x1b[4mSize\x1b[0m    \x1b[4m Oligo 1 \x1b[0m   \x1b[4m Oligo 2 \x1b[0m   \x1b[4m Oligo 3 \x1b[0m\n")
         sys.stderr.write("                              MT    %GC   MT    %GC   MT    %GC\n")
         regstart = self.field                # Start of target region
@@ -413,13 +452,19 @@ more gene names, or (if preceded by @) a file containing gene names, one per lin
             seq.name = gnames[i]
             if self.toFasta:
                 seq.write(gnames[i] + ".fa", label=gnames[i] + " " + seq.name[1:])
-            best = self.findOptimalOligos(seq, regstart, regend)
-            seq.extra = best
+            seq.triples = self.findOptimalOligos(seq, regstart, regend) # List of triples, best first
+            best = seq.best = seq.triples[0]
             sys.stderr.write("  {:20}{}bp   {:.1f}  {}%   {:.1f}  {}%   {:.1f}  {}%\n".format(
-                gnames[i], best[1].start - best[0].start, 
-                best[0].mt, int(100*best[0].gcperc), 
-                best[1].mt, int(100*best[1].gcperc), 
-                best[2].mt, int(100*best[2].gcperc)))
+                gnames[i], best.size,
+                best.oligo1.mt, int(100*best.oligo1.gcperc), 
+                best.oligo2.mt, int(100*best.oligo2.gcperc), 
+                best.oligo3.mt, int(100*best.oligo3.gcperc)))
+
+        # Global optimization
+        if not self.local:
+            self.globalOptimization()
+
+        # Writing output
         sys.stderr.write("\n\x1b[1mWriting output:\x1b[0m\n")
         self.writeOutput()
 
@@ -429,15 +474,16 @@ more gene names, or (if preceded by @) a file containing gene names, one per lin
             out.write("Gene\tOrientation\tGenomic coordinates\tPCR Product Size\tO1-sequence\tO1-length\tO1-MT\tO1-GC%\tO2-sequence\tO2-length\tO2-MT\tO2-GC%\tO3-sequence\tO3-length\tO3-MT\tO3-GC%\n")
             for i in range(len(self.sequences)):
                 seq = self.sequences[i]
-                [o1, o2, o3] = seq.extra
+                best = seq.best
                 out.write("{}\t{}\t{}:{:,}-{:,}\t{}\t{}\t{}\t{:.1f}\t{}\t{}\t{}\t{:.1f}\t{}\t{}\t{}\t{:.1f}\t{}\n".format(
                     seq.name, "F" if seq.strand == "+" else "R", seq.chrom, seq.start, seq.end,
-                    o2.start - o1.start,
-                    revcomp(o1.sequence)+U1, len(o1.sequence), o1.mt, int(100*o1.gcperc),
-                    revcomp(o2.sequence)+U1, len(o2.sequence), o2.mt, int(100*o2.gcperc),
-                    revcomp(o3.sequence)+U2, len(o3.sequence), o3.mt, int(100*o3.gcperc)))
+                    best.size,
+                    revcomp(best.oligo1.sequence)+U1, len(best.oligo1.sequence), best.oligo1.mt, int(100*best.oligo1.gcperc),
+                    revcomp(best.oligo2.sequence)+U1, len(best.oligo2.sequence), best.oligo2.mt, int(100*best.oligo2.gcperc),
+                    revcomp(best.oligo3.sequence)+U2, len(best.oligo3.sequence), best.oligo3.mt, int(100*best.oligo3.gcperc)))
 
     def findOptimalOligos(self, seq, regstart, regend):
+        triples = []
         positions = seq.findVT()
         pos1 = findCandidatePositions(positions, self.ncandout, regstart, -1) + findCandidatePositions(positions, self.ncandin, regstart, 1)
         pos1.sort(key=lambda p: abs(regstart - p))
@@ -455,27 +501,70 @@ more gene names, or (if preceded by @) a file containing gene names, one per lin
                     # See if we can find Oligo3
                     c = findOptimalMT(seq.seq, b.start, -1, self.minlength, self.maxlength)
                     if c:
-                        score = self.score(a, b)
-                        if score < bestscore:
-                            bestscore = score
-                            best = [a, b, c]
-        return best
+                        t = Triple(a, b, c)
+                        t.score = self.score(t)
+                        triples.append(t)
+        triples.sort(key=lambda t: t.score)
+        return triples[:self.maxtriples]
 
-    def score(self, a, b):
-        s1 = (a.mt - 65)**2
-        s2 = (a.mt - 65)**2
-        s3 = (a.mt - b.mt)**2
-        size = b.start - a.start - self.regsize
+    def score(self, t):
+        s1 = (t.oligo1.mt - 65)**2
+        s2 = (t.oligo2.mt - 65)**2
+        s3 = (t.oligo3.mt - 65)**2
+        s4 = t.tmspread**2
+        size = t.size
         if size > 0:
-            s4 = self.weightlen1 * size**2
+            s5 = self.weightlen1 * size**2
         else:
-            s4 = self.weightlen2 * size**2
-        return self.weightmt*(s1 + s2 + s3) + s4
+            s5 = self.weightlen2 * size**2
+        return self.weightmt*(s1 + s2 + s3 + s4) + s5
+
+    def randomTripleset(self):
+        """Pick a triple at random for each sequence (storing it into rndtriple)."""
+        for seq in self.sequences:
+            seq.randomTriple()
+
+    def triplesetVariance(self):
+        """Return the variance of the Tms of the current set of random triples."""
+        tms = []
+        for seq in self.sequences:
+            t = seq.rndtriple
+            tms.append(t.oligo1.mt)
+            tms.append(t.oligo2.mt)
+            tms.append(t.oligo3.mt)
+        return var(tms)
+
+    def setBestTripleset(self):
+        for seq in self.sequences:
+            seq.best = seq.rndtriple
+
+    def globalOptimization(self):
+        sys.stderr.write("\n\x1b[1mGlobal optimization:\x1b[0m\n")
+        sys.stderr.write("\nPerforming MonteCarlo optimization, {} rounds (ctrl-c to interrupt)\n".format(self.nrounds))
+        sys.stderr.write("\x1b[s")
+        bestvar = 100000
+        try:
+            for i in range(self.nrounds):
+                update = False
+                self.randomTripleset()
+                var = self.triplesetVariance()
+                if var < bestvar:
+                    self.setBestTripleset()
+                    bestvar = var
+                    update = True
+                if update or i % 10000 == 0:
+                    sys.stderr.write("\x1b[uRound: {}, Best variance: {}".format(i, bestvar))
+        except KeyboardInterrupt:
+            pass
+        sys.stderr.write("\n{} rounds done, best variance={}\n".format(i+1, bestvar))
 
 ### Let's get things started
 
 if __name__ == "__main__":
     args = sys.argv[1:]
+    if not checkBedtools():
+        sys.stderr.write("Error: bedtools not found. This program requires bedtools to run.\n")
+        sys.exit(2)
     M = Main()
     if M.parseArgs(args):
         M.banner(sys.stderr)
