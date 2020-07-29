@@ -150,6 +150,7 @@ class Sequence(object):
     triples = []
     rndtriple = None            # One triple picked at random
     best = None                 # Best triple found so far
+    bestGC = 0                  # GC content corresponding to the best triple
 
     def __init__(self, name, seq):
         self.name = name
@@ -170,6 +171,13 @@ class Sequence(object):
     def randomTriple(self):
         self.rndtriple = random.choice(self.triples)
         return self.rndtriple
+
+    def bestGC(self):
+        start = self.best.oligo1.start+1
+        end = self.best.oligo2.start+1
+        gc = ngc(self.seq[start:end])
+        self.bestGC = 1.0 * gc / (end-start)
+        return self.bestGC
 
 class SequenceManager(object):
     reference = None
@@ -349,7 +357,6 @@ class Main(object):
         if os.path.isfile(self.reference):
             self.seqman = SequenceManager(self.reference)
             if self.genelist and self.genes:
-                self.genelist.load()
                 return True
             
             else:
@@ -427,6 +434,8 @@ more gene names, or (if preceded by @) a file containing gene names, one per lin
         gcoords = []
         self.regsize  = self.upstream + self.downstream # Size of target region
 
+        self.genelist.load()
+
         sys.stderr.write("\n\x1b[1mLoading target sequences:\x1b[0m\n")
         for g in self.genes:
             coords = self.genelist.get(g)
@@ -469,18 +478,18 @@ more gene names, or (if preceded by @) a file containing gene names, one per lin
         self.writeOutput()
 
     def writeOutput(self):
-        sys.stderr.write("\n  Writing oligo information for {} genes to {}.\n".format(len(self.sequences), self.outfile))
+        sys.stderr.write("  Writing oligo information for {} genes to {}.\n".format(len(self.sequences), self.outfile))
         with open(self.outfile, "w") as out:
-            out.write("Gene\tOrientation\tGenomic coordinates\tPCR Product Size\tO1-sequence\tO1-length\tO1-MT\tO1-GC%\tO2-sequence\tO2-length\tO2-MT\tO2-GC%\tO3-sequence\tO3-length\tO3-MT\tO3-GC%\n")
+            out.write("Gene\tOrientation\tGenomic coordinates\tOligo positions\tPCR Product Size\tPCR Product GC%\tO1-sequence\tO1-length\tO1-MT\tO1-GC%\tO2-sequence\tO2-length\tO2-MT\tO2-GC%\tO3-sequence\tO3-length\tO3-MT\tO3-GC%\n")
             for i in range(len(self.sequences)):
                 seq = self.sequences[i]
                 best = seq.best
-                out.write("{}\t{}\t{}:{:,}-{:,}\t{}\t{}\t{}\t{:.1f}\t{}\t{}\t{}\t{:.1f}\t{}\t{}\t{}\t{:.1f}\t{}\n".format(
-                    seq.name, "F" if seq.strand == "+" else "R", seq.chrom, seq.start, seq.end,
-                    best.size,
-                    revcomp(best.oligo1.sequence)+U1, len(best.oligo1.sequence), best.oligo1.mt, int(100*best.oligo1.gcperc),
-                    revcomp(best.oligo2.sequence)+U1, len(best.oligo2.sequence), best.oligo2.mt, int(100*best.oligo2.gcperc),
-                    revcomp(best.oligo3.sequence)+U2, len(best.oligo3.sequence), best.oligo3.mt, int(100*best.oligo3.gcperc)))
+                out.write("{}\t{}\t{}:{:,}-{:,}\t{}-{}\t{}\t{}\t{}\t{}\t{:.1f}\t{}\t{}\t{}\t{:.1f}\t{}\t{}\t{}\t{:.1f}\t{}\n".format(
+                    seq.name, "F" if seq.strand == "+" else "R", seq.chrom, seq.start, seq.end, best.oligo1.start+1, best.oligo2.start+1,
+                    best.size, int(100*seq.bestGC()),
+                    revcomp(best.oligo1.sequence)+"/"+U1, len(best.oligo1.sequence), best.oligo1.mt, int(100*best.oligo1.gcperc),
+                    revcomp(best.oligo2.sequence)+"/"+U1, len(best.oligo2.sequence), best.oligo2.mt, int(100*best.oligo2.gcperc),
+                    revcomp(best.oligo3.sequence)+"/"+U2, len(best.oligo3.sequence), best.oligo3.mt, int(100*best.oligo3.gcperc)))
 
     def findOptimalOligos(self, seq, regstart, regend):
         triples = []
@@ -540,8 +549,8 @@ more gene names, or (if preceded by @) a file containing gene names, one per lin
 
     def globalOptimization(self):
         sys.stderr.write("\n\x1b[1mGlobal optimization:\x1b[0m\n")
-        sys.stderr.write("\nPerforming MonteCarlo optimization, {} rounds (ctrl-c to interrupt)\n".format(self.nrounds))
-        sys.stderr.write("\x1b[s")
+        sys.stderr.write("  Performing MonteCarlo optimization, {:,} rounds (ctrl-c to interrupt)\n".format(self.nrounds))
+        sys.stderr.write("  \x1b[s")
         bestvar = 100000
         try:
             for i in range(self.nrounds):
@@ -553,10 +562,10 @@ more gene names, or (if preceded by @) a file containing gene names, one per lin
                     bestvar = var
                     update = True
                 if update or i % 10000 == 0:
-                    sys.stderr.write("\x1b[uRound: {}, Best variance: {}".format(i, bestvar))
+                    sys.stderr.write("\x1b[uRound: {:,}, Best variance: {:.3f}".format(i, bestvar))
         except KeyboardInterrupt:
             pass
-        sys.stderr.write("\n{} rounds done, best variance={}\n".format(i+1, bestvar))
+        sys.stderr.write("\n  {:,} rounds done, best variance={:.3f}\n".format(i+1, bestvar))
 
 ### Let's get things started
 
