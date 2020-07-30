@@ -159,7 +159,10 @@ class Sequence(object):
 
     def write(self, filename, label=None):
         with open(filename, "w") as out:
-            out.write(">{}\n{}\n".format(label or self.name, self.seq))
+            self.writes(out, label=label)
+
+    def writes(self, out, label=None):
+        out.write(">{}\n{}\n".format(label or self.name, self.seq))
 
     def findVT(self):
         positions = []
@@ -266,11 +269,11 @@ class GFFParser(GTFParser):
 ## Main
 
 class Main(object):
-    genelist = None
+    reference = None            # Name of reference file
+    genelist = None             # Name of genes DB
     genes = []
     sequences = []              # List of Sequence objects
     outfile = "/dev/stdout"
-    reference = ""
     seqman = None
     toFasta = False
     local = False               # If true, skips global optimization.
@@ -305,8 +308,8 @@ class Main(object):
             if prev == "-o":
                 self.outfile = a
                 prev = ""
-            elif prev == "-r":
-                self.reference = a
+            elif prev == "-g":
+                self.genelist = a
                 prev = ""
             elif prev == "-u":
                 self.upstream = int(a)
@@ -333,20 +336,23 @@ class Main(object):
                 self.weightlen1 = float(a)
                 self.weightlen2 = float(a)
                 prev = ""
-            elif a in ["-o", "-r", "-u", "-d", "-s", "-wm", "-wl", "-ws", "-w"]:
+            elif prev == "-n":
+                self.nrounds = int(a)
+                prev = ""
+            elif prev == "-F":
+                self.toFasta = a
+                prev = ""
+            elif a in ["-o", "-g", "-u", "-d", "-s", "-wm", "-wl", "-ws", "-w", "-n", "-F"]:
                 prev = a
             elif a == "-f":
                 self.toFasta = True
             elif a == "-l":
                 self.local = True
-            elif self.genelist is None:
-                ext = os.path.splitext(a)[1]
-                if ext in [".gtf", ".GTF"]:
-                    self.genelist = GTFParser(a)
-                elif ext in [".gff", ".gff3", ".GFF", ".GFF3"]:
-                    self.genelist = GFFParser(a)
+            elif self.reference is None:
+                if os.path.isfile(a):
+                    self.reference = a
                 else:
-                    sys.stderr.write("Error: gene database is not a GTF or GFF file.\n")
+                    sys.stderr.write("Error: genome reference file `{}' not found.\n".format(a))
                     return False
             else:
                 if a[0] == '@':
@@ -354,16 +360,38 @@ class Main(object):
                         self.genes += [ g.strip() for g in f.read().split("\n") ]
                 else:
                     self.genes.append(a)
-        if os.path.isfile(self.reference):
-            self.seqman = SequenceManager(self.reference)
-            if self.genelist and self.genes:
-                return True
-            
+
+        if self.genelist:
+            if os.path.isfile(self.genelist):
+                path = self.genelist
+                ext = os.path.splitext(self.genelist)[1]
             else:
-                return self.usage()
+                sys.stderr.write("Error: gene database file `{}' not found.\n".format(self.genelist))
+                return False
         else:
-            sys.stderr.write("Error: please specify genome reference file with -r option.\n")
-            return False
+            (prefix, ext, path) = self.findGeneDB()
+            if not path:
+                sys.stderr.write("Error: no gene database found with the name {} and one of the\n  extensions .gtf, .GTF, .gff, .gff3, .GFF, or .GFF3. Use -g to specify it.\n".format(prefix))
+                return False
+
+        if ext in [".gtf", ".GTF"]:
+            self.genelist = GTFParser(path)
+        elif ext in [".gff", ".gff3", ".GFF", ".GFF3"]:
+            self.genelist = GFFParser(path)
+
+        if self.genes:
+            return True
+        else:
+            return self.usage()
+
+    def findGeneDB(self):
+        base = os.path.splitext(self.reference)[0]
+        name = base.split("/")[-1]
+        for ext in [".gtf", ".GTF", ".gff", ".gff3", ".GFF", ".GFF3"]:
+            path = base + ext
+            if os.path.isfile(path):
+                return (name, ext, path)
+        return (name, None, None)
 
     def banner(self, out):
         out.write("""\x1b[1;36m***************************************************
@@ -402,16 +430,18 @@ has no impact. Examples:
 """)
         else:
             sys.stdout.write("""
-\x1b[1mUsage: fengc.py [options] genesdb genes...\x1b[0m
+\x1b[1mUsage: fengc.py [options] reference genes...\x1b[0m
 
-where `genesdb' is a gene database in GFT or GFF format, and `genes' is one or
+where `reference' is a FASTA file containing the genome reference, and `genes' is one or
 more gene names, or (if preceded by @) a file containing gene names, one per line.
 
 \x1b[1mGeneral options:\x1b[0m
 
-  -r R | Specify location of genome reference file (required).
+  -g G | Use gene database G (in GTF or GFF format). Default: a file with the same
+         name as the reference file, with extension .gtf or .gff (lower or uppercase).
   -o O | Write output to file O (default: standard output).
-  -f   | Write target sequences to FASTA files.
+  -f   | Write target sequences to separate FASTA files.
+  -F F | Write target sequences to single FASTA file F.
 
 \x1b[1mDesign options:\x1b[0m
 
@@ -426,7 +456,14 @@ more gene names, or (if preceded by @) a file containing gene names, one per lin
   -ws W | Set weight for region length when smaller than target (default: {}).
   -w  W | Set both -wl and -ws to W.
 
-""".format(self.upstream, self.downstream, self.field, self.weightmt, self.weightlen1, self.weightlen2))
+\x1b[1mOptimization options:\x1b[0m
+
+  -n N | Perform N rounds of global optimization (default: {}).
+  -l   | Local only - do not perform global optimization.
+
+(c) 2020, University of Florida Research Foundation.
+
+""".format(self.upstream, self.downstream, self.field, self.weightmt, self.weightlen1, self.weightlen2, self.nrounds))
         return False
 
     def run(self):
@@ -434,6 +471,7 @@ more gene names, or (if preceded by @) a file containing gene names, one per lin
         gcoords = []
         self.regsize  = self.upstream + self.downstream # Size of target region
 
+        self.seqman = SequenceManager(self.reference)
         self.genelist.load()
 
         sys.stderr.write("\n\x1b[1mLoading target sequences:\x1b[0m\n")
@@ -476,6 +514,8 @@ more gene names, or (if preceded by @) a file containing gene names, one per lin
         # Writing output
         sys.stderr.write("\n\x1b[1mWriting output:\x1b[0m\n")
         self.writeOutput()
+        if self.toFasta:
+            self.writeFastas(gnames)
 
     def writeOutput(self):
         sys.stderr.write("  Writing oligo information for {} genes to {}.\n".format(len(self.sequences), self.outfile))
@@ -490,6 +530,17 @@ more gene names, or (if preceded by @) a file containing gene names, one per lin
                     revcomp(best.oligo1.sequence)+"/"+U1, len(best.oligo1.sequence), best.oligo1.mt, int(100*best.oligo1.gcperc),
                     revcomp(best.oligo2.sequence)+"/"+U1, len(best.oligo2.sequence), best.oligo2.mt, int(100*best.oligo2.gcperc),
                     revcomp(best.oligo3.sequence)+"/"+U2, len(best.oligo3.sequence), best.oligo3.mt, int(100*best.oligo3.gcperc)))
+
+    def writeFastas(self, gnames):
+        if self.toFasta is True:
+            for i in range(len(gnames)):
+                seq = self.sequences[i]
+                seq.write(gnames[i] + ".fa", label=gnames[i] + " " + seq.name[1:])
+        else:
+            with open(self.toFasta, "w") as out:
+                for i in range(len(gnames)):
+                    seq = self.sequences[i]
+                    seq.writes(out, label=gnames[i] + " " + seq.name[1:])
 
     def findOptimalOligos(self, seq, regstart, regend):
         triples = []
@@ -578,8 +629,8 @@ if __name__ == "__main__":
     if M.parseArgs(args):
         M.banner(sys.stderr)
         M.run()
-    else:
-        M.usage(args)
+#    else:
+#        M.usage(args)
 
 ### Test with:
 
