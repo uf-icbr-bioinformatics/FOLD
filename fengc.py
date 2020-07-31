@@ -158,6 +158,9 @@ class Sequence(object):
         self.seq = seq
         self.triples = []
 
+    def coordinates(self):
+        return "{}:{}-{}".format(self.chrom, self.start, self.end)
+
     def write(self, filename, label=None):
         with open(filename, "w") as out:
             self.writes(out, label=label)
@@ -399,7 +402,7 @@ class Main(object):
 
     def banner(self, out):
         out.write("""\x1b[1;36m***************************************************
-* fengc.py - design primers for FENGC experiments *
+* fengc.py - design primers for FenGC experiments *
 ***************************************************\x1b[0m
 """)
 
@@ -501,8 +504,6 @@ more gene names, or (if preceded by @) a file containing gene names, one per lin
             if gcoords[i][3] == '-':
                 seq.seq = revcomp(seq.seq)
             seq.name = gnames[i]
-            if self.toFasta:
-                seq.write(gnames[i] + ".fa", label=gnames[i] + " " + seq.name[1:])
             seq.triples = self.findOptimalOligos(seq, regstart, regend) # List of triples, best first
             if seq.triples:
                 best = seq.best = seq.triples[0]
@@ -545,12 +546,12 @@ more gene names, or (if preceded by @) a file containing gene names, one per lin
         if self.toFasta is True:
             for i in range(len(gnames)):
                 seq = self.sequences[i]
-                seq.write(gnames[i] + ".fa", label=gnames[i] + " " + seq.name[1:])
+                seq.write(gnames[i] + ".fa", label=gnames[i] + " " + seq.coordinates())
         else:
             with open(self.toFasta, "w") as out:
                 for i in range(len(gnames)):
                     seq = self.sequences[i]
-                    seq.writes(out, label=gnames[i] + " " + seq.name[1:])
+                    seq.writes(out, label=gnames[i] + " " + seq.coordinates())
 
     def findOptimalOligos(self, seq, regstart, regend):
         triples = []
