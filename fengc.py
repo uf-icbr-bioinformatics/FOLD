@@ -147,6 +147,7 @@ class Sequence(object):
     start = 0
     end = 0
     strand = ""
+    valid = True                # Set to False if no valid oligos found
     triples = []
     rndtriple = None            # One triple picked at random
     best = None                 # Best triple found so far
@@ -277,7 +278,7 @@ class Main(object):
     seqman = None
     toFasta = False
     local = False               # If true, skips global optimization.
-
+    
     upstream = 400
     downstream = 100
     regsize = 500
@@ -503,12 +504,16 @@ more gene names, or (if preceded by @) a file containing gene names, one per lin
             if self.toFasta:
                 seq.write(gnames[i] + ".fa", label=gnames[i] + " " + seq.name[1:])
             seq.triples = self.findOptimalOligos(seq, regstart, regend) # List of triples, best first
-            best = seq.best = seq.triples[0]
-            sys.stderr.write("  {:20}{}bp   {:.1f}  {}%   {:.1f}  {}%   {:.1f}  {}%\n".format(
-                gnames[i], best.size,
-                best.oligo1.mt, int(100*best.oligo1.gcperc), 
-                best.oligo2.mt, int(100*best.oligo2.gcperc), 
-                best.oligo3.mt, int(100*best.oligo3.gcperc)))
+            if seq.triples:
+                best = seq.best = seq.triples[0]
+                sys.stderr.write("  {:20}{}bp   {:.1f}  {}%   {:.1f}  {}%   {:.1f}  {}%\n".format(
+                    gnames[i], best.size,
+                    best.oligo1.mt, int(100*best.oligo1.gcperc), 
+                    best.oligo2.mt, int(100*best.oligo2.gcperc), 
+                    best.oligo3.mt, int(100*best.oligo3.gcperc)))
+            else:
+                seq.valid = False
+                sys.stderr.write("  {:20}  -- no valid oligos found --\n".format(gnames[i]))
 
         # Global optimization
         if not self.local:
@@ -526,6 +531,8 @@ more gene names, or (if preceded by @) a file containing gene names, one per lin
             out.write("Gene\tOrientation\tGenomic coordinates\tOligo positions\tPCR Product Size\tPCR Product GC%\tO1-sequence\tO1-length\tO1-MT\tO1-GC%\tO2-sequence\tO2-length\tO2-MT\tO2-GC%\tO3-sequence\tO3-length\tO3-MT\tO3-GC%\n")
             for i in range(len(self.sequences)):
                 seq = self.sequences[i]
+                if not seq.valid:
+                    continue
                 best = seq.best
                 out.write("{}\t{}\t{}:{:,}-{:,}\t{}-{}\t{}\t{}\t{}\t{}\t{:.1f}\t{}\t{}\t{}\t{:.1f}\t{}\t{}\t{}\t{:.1f}\t{}\n".format(
                     seq.name, "F" if seq.strand == "+" else "R", seq.chrom, seq.start, seq.end, best.oligo1.start+1, best.oligo2.start+1,
@@ -585,21 +592,24 @@ more gene names, or (if preceded by @) a file containing gene names, one per lin
     def randomTripleset(self):
         """Pick a triple at random for each sequence (storing it into rndtriple)."""
         for seq in self.sequences:
-            seq.randomTriple()
+            if seq.valid:
+                seq.randomTriple()
 
     def triplesetVariance(self):
         """Return the variance of the Tms of the current set of random triples."""
         tms = []
         for seq in self.sequences:
-            t = seq.rndtriple
-            tms.append(t.oligo1.mt)
-            tms.append(t.oligo2.mt)
-            tms.append(t.oligo3.mt)
+            if seq.valid:
+                t = seq.rndtriple
+                tms.append(t.oligo1.mt)
+                tms.append(t.oligo2.mt)
+                tms.append(t.oligo3.mt)
         return var(tms)
 
     def setBestTripleset(self):
         for seq in self.sequences:
-            seq.best = seq.rndtriple
+            if seq.valid:
+                seq.best = seq.rndtriple
 
     def globalOptimization(self):
         sys.stderr.write("\n\x1b[1mGlobal optimization:\x1b[0m\n")
@@ -632,9 +642,7 @@ if __name__ == "__main__":
     if M.parseArgs(args):
         M.banner(sys.stderr)
         M.run()
-#    else:
-#        M.usage(args)
 
 ### Test with:
 
-## ./fengc.py -f -r /ufrc/data/reference/icbr/GRCh38/GRCh38.fa /ufrc/data/reference/icbr/GRCh38/Homo_sapiens.GRCh38.95.gtf APOE KDM6A TLR4
+## ./fengc.py -f /ufrc/data/reference/icbr/GRCh38/GRCh38.fa -g /ufrc/data/reference/icbr/GRCh38/Homo_sapiens.GRCh38.95.gtf APOE KDM6A TLR4
