@@ -302,7 +302,7 @@ class Main(object):
 
     def parseArgs(self, args):
         if "-h" in args or "--help" in args:
-            return False
+            return self.usage()
         prev = ""
         for a in args:
             if prev == "-o":
@@ -360,6 +360,9 @@ class Main(object):
                         self.genes += [ g.strip() for g in f.read().split("\n") ]
                 else:
                     self.genes.append(a)
+
+        if not self.reference:
+            return self.usage()
 
         if self.genelist:
             if os.path.isfile(self.genelist):
