@@ -6,6 +6,13 @@ import os.path
 import random
 from numpy import var
 import subprocess as sp
+import importlib
+
+try:
+    importlib.import_module('primer3')
+    HAS_PRIMER3 = True
+except ImportError:
+    HAS_PRIMER3 = False
 
 # Constants
 
@@ -45,40 +52,6 @@ def revcomp(s):
 
 def ngc(seq):
     return seq.count("C") + seq.count("G")
-
-# Find optimal oligo length in a sequence giving MT as close as possible to 65 degrees
-# Returns an Oligo object
-
-def findOptimalMT(seq, start, direction, minlen, maxlen):
-    # print (start, direction, minlen, maxlen)
-    bestlen = 0
-    bestmt = 100
-    delta = 100
-    for l in range(minlen, maxlen):
-        if direction == 1:
-            oligo = seq[start:start+l] ## TODO: optimize - we just need to look at the base being added
-        else:
-            oligo = seq[start-l+1:start+1]
-        gc = ngc(oligo)
-        gcperc = 1.0 * gc / l
-
-        # We want GC% between 40 and 65
-        if gcperc < 0.4 or gcperc > 0.65:
-            continue
-
-        # Compute MT
-        thismt = mt(gc, l)
-
-        # If we're closer to 65 than the current best, keep this
-        if abs(thismt-65) < delta:
-            bestlen = l
-            bestmt = thismt
-            delta = abs(thismt-65)
-
-    if 60 <= bestmt < 70:
-        return Oligo(seq, start, direction, bestlen, bestmt)
-    else:
-        return None
 
 # Find candidate positions to test
 
@@ -290,11 +263,12 @@ class Main(object):
     maxlength = 30
     minmt = 62
     maxmt = 68
+    mt_primer3 = False          # Use primer3-py to compute Tm?
 
     ncandout = 40               # Number of candidates to consider outside of target region
     ncandin = 10                # Number of candidates to consider inside of target region
     maxtriples = 100            # Maximum number of triples to keep for each target (sorted by best score)
-    nrounds = 1000000              # Rounds of global optimization
+    nrounds = 1000000           # Rounds of global optimization
 
     weightmt = 1.0              # Weight of MT in score
     weightlen1 = 1.0            # Weight of region length in score (if larger than regsize)
@@ -352,6 +326,11 @@ class Main(object):
                 self.toFasta = True
             elif a == "-l":
                 self.local = True
+            elif a == "-tm3":
+                if HAS_PRIMER3:
+                    self.mt_primer3 = True
+                else:
+                    sys.stderr.write("Warning: the primer3-py package is not installed. Falling back to built-in Tm calculation.\n")
             elif self.reference is None:
                 if os.path.isfile(a):
                     self.reference = a
@@ -553,6 +532,43 @@ more gene names, or (if preceded by @) a file containing gene names, one per lin
                     seq = self.sequences[i]
                     seq.writes(out, label=gnames[i] + " " + seq.coordinates())
 
+    # Find optimal oligo length in a sequence giving MT as close as possible to 65 degrees
+    # Returns an Oligo object
+
+    def findOptimalMT(self, seq, start, direction):
+        # print (start, direction, minlen, maxlen)
+        bestlen = 0
+        bestmt = 100
+        delta = 100
+        for l in range(self.minlength, self.maxlength):
+            if direction == 1:
+                oligo = seq[start:start+l] ## TODO: optimize - we just need to look at the base being added
+            else:
+                oligo = seq[start-l+1:start+1]
+            gc = ngc(oligo)
+            gcperc = 1.0 * gc / l
+
+            # We want GC% between 40 and 65
+            if gcperc < 0.4 or gcperc > 0.65:
+                continue
+
+            # Compute MT
+            if self.mt_primer3:
+                thismt = primer3.caclTm(oligo)
+            else:
+                thismt = mt(gc, l)
+
+            # If we're closer to 65 than the current best, keep this
+            if abs(thismt-65) < delta:
+                bestlen = l
+                bestmt = thismt
+                delta = abs(thismt-65)
+
+        if 60 <= bestmt < 70:
+            return Oligo(seq, start, direction, bestlen, bestmt)
+        else:
+            return None
+
     def findOptimalOligos(self, seq, regstart, regend):
         triples = []
         positions = seq.findVT()
@@ -560,8 +576,8 @@ more gene names, or (if preceded by @) a file containing gene names, one per lin
         pos1.sort(key=lambda p: abs(regstart - p))
         pos2 = findCandidatePositions(positions, self.ncandout, regend, 1) + findCandidatePositions(positions, self.ncandin, regend, -1)
         pos2.sort(key=lambda p: abs(regend - p))
-        oligos1 = [ findOptimalMT(seq.seq, start, 1, self.minlength, self.maxlength) for start in pos1 ]
-        oligos2 = [ findOptimalMT(seq.seq, start, 1, self.minlength, self.maxlength) for start in pos2 ]
+        oligos1 = [ findOptimalMT(seq.seq, start, 1) for start in pos1 ]
+        oligos2 = [ findOptimalMT(seq.seq, start, 1) for start in pos2 ]
 
         # Find best pair
         best = None
