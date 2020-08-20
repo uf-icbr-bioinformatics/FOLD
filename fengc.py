@@ -247,32 +247,42 @@ class GFFParser(GTFParser):
 
 class Main(object):
     reference = None            # Name of reference file
-    genelist = None             # Name of genes DB
+    genelist = None             # -g Name of genes DB
     genes = []
     sequences = []              # List of Sequence objects
-    outfile = "/dev/stdout"
+    outfile = "/dev/stdout"     # -o
     seqman = None
-    toFasta = False
-    local = False               # If true, skips global optimization.
+    toFasta = False             # -F, -f
+    local = False               # -l If true, skips global optimization.
     
-    upstream = 400
-    downstream = 100
-    regsize = 500
-    field = 2000
+    upstream = 400              # -u
+    downstream = 100            # -d
+    field = 2000                # -s
     minlength = 8
     maxlength = 30
     minmt = 62
     maxmt = 68
-    mt_primer3 = False          # Use primer3-py to compute Tm?
+    mt_primer3 = False          # -tm3 Use primer3-py to compute Tm?
+
+    maxover = 0.15              # -mo Amplicon size can increase by this much
+    maxunder = 0.05             # -mu Amplicon size can decrease by this much
+    sizemethod = "s"            # -S Method to weight amplicon size: "s" (size), "t" (targets)
+
+    # Computed
+    regsize = 500               # Desired amplicong size
+    regmax = 0                  # Maximum amplicon size
+    regmin = 0                  # Minimum amplicon size
+    targetA = 0                 # Ideal position of A oligo
+    targetB = 0                 # Ideal position of B oligo
 
     ncandout = 40               # Number of candidates to consider outside of target region
     ncandin = 10                # Number of candidates to consider inside of target region
     maxtriples = 100            # Maximum number of triples to keep for each target (sorted by best score)
-    nrounds = 1000000           # Rounds of global optimization
+    nrounds = 1000000           # -n Rounds of global optimization
 
-    weightmt = 1.0              # Weight of MT in score
-    weightlen1 = 1.0            # Weight of region length in score (if larger than regsize)
-    weightlen2 = 1.0            # Weight of region length in score (if smaller than regsize)
+    weightmt = 1.0              # -wm Weight of MT in score
+    weightlen1 = 1.0            # -wl Weight of region length in score (if larger than regsize)
+    weightlen2 = 1.0            # -ws Weight of region length in score (if smaller than regsize)
 
     def __init__(self):
         self.genes = []
@@ -280,7 +290,7 @@ class Main(object):
 
     def parseArgs(self, args):
         if "-h" in args or "--help" in args:
-            return self.usage()
+            return self.usage(args)
         prev = ""
         for a in args:
             if prev == "-o":
@@ -288,9 +298,6 @@ class Main(object):
                 prev = ""
             elif prev == "-g":
                 self.genelist = a
-                prev = ""
-            elif prev == "-u":
-                self.upstream = int(a)
                 prev = ""
             elif prev == "-u":
                 self.upstream = int(a)
@@ -320,7 +327,16 @@ class Main(object):
             elif prev == "-F":
                 self.toFasta = a
                 prev = ""
-            elif a in ["-o", "-g", "-u", "-d", "-s", "-wm", "-wl", "-ws", "-w", "-n", "-F"]:
+            elif prev == "-mo":
+                self.maxover = 100.0 / int(a)
+                prev = ""
+            elif prev == "-mu":
+                self.maxover = 1,0 - (100.0 / int(a))
+                prev = ""
+            elif prev == "-S":
+                self.sizemethod = a
+                prev = ""
+            elif a in ["-o", "-g", "-u", "-d", "-s", "-wm", "-wl", "-ws", "-w", "-n", "-F", "-mo", "-mu", "-S"]:
                 prev = a
             elif a == "-f":
                 self.toFasta = True
@@ -392,16 +408,26 @@ class Main(object):
 
 This program tests all possible pairs of candidate oligos at the 5' and 3'
 end of the target sequence, assigning each pair a score, and selects the
-pair with the optimal score. The score is the sum of four components:
+pair with the optimal score. The score is the sum of five components:
 
-  A. Absolute difference between Tm for Oligo 1 and 65.
-  B. Absolute difference between Tm for Oligo 2 and 65.
-  C. Absolute difference between Tm for Oligo 1 and Tm for Oligo 2.
-  D. Distance between start of Oligo1 and start of Oligo2.
+  A. Squared difference between Tm for Oligo 1 and 65.
+  B. Squared difference between Tm for Oligo 2 and 65.
+  C. Squared difference between Tm for Oligo 3 and 65.
+  D. Square of the difference between the highest and lowest Tms.
+  E. Amplicon size factor.
 
-The first three components are multiplied by weight `wm', while D is multiplied
-by `wl' if it is larger than the desired target sequence, or by `ws' if it is
-smaller. The results are added together to generate the final score.
+The first three components are multiplied by weight `wm'. Component E can be computed 
+in two different ways, depending on the value of the -S argument. If the value is 
+"s" (the default), E is the predicted amplicon size (i.e. the distance between the 
+start of Oligo1 and the start of Oligo2) multiplied by `wl' if it is larger than 
+the desired amplicon size, or by `ws' if it is smaller. 
+
+If -S is "t", component E is the square of the distance between the start of Oligo1 
+and the desired amplicon start, multipled by `wl', plus the square of the distance 
+between the start of Oligo2 and the desired amplicon end, multiplied by `ws'. Use
+"-h size" to view an example.
+
+The values of the five components are added together to generate the final score.
 
 Higher weights mean that the corresponding component has more impact on the choice
 of the optimal pair, while a weight of 0 means that the corresponding component
@@ -412,6 +438,34 @@ has no impact. Examples:
 
 * To avoid producing an amplified region shorter than the desired one, use `-ws 1000'
   (or any other very large number).
+
+""")
+        elif "size" in args:
+            sys.stdout.write("""\x1b[1mAmplicon size weighting example\x1b[0m
+
+In this example, the gene TSS is at position 1,000. The desired amplicon extends
+from 400bp upstream of the TSS to 100b downstream, for a total size of 500bp.
+Therefore, t1 is at position 600 and t2 at position 1100.
+
+
+         t1                                   TSS       t2
+         [              400bp                 |  100bp  ]
+----------------------------------------------+------------------
+       ^                                               ^
+       A                                               B
+
+Imagine that OligoA is at position 570, and OligoB at position 1090, with wl=2
+and ws=3. Component E of the weight is computed in the following ways.
+
+If -S is "s":
+
+  Predicted amplicon size is 520, which is larger than the desired size (500),
+  therefore E = 520*2 = 1040
+
+If -S is "t":
+
+  The distance between A and t1 is 30, and between B and t2 is 10. Therefore
+  E = 900*2 + 100*3 = 1800 + 300 = 2100
 
 """)
         else:
@@ -456,6 +510,10 @@ more gene names, or (if preceded by @) a file containing gene names, one per lin
         gnames = []
         gcoords = []
         self.regsize  = self.upstream + self.downstream # Size of target region
+        self.regmax = self.regsize + int(self.regsize * self.maxover)
+        self.regmin = self.regsize - int(self.regsize * self.maxunder)
+        self.targetA = self.field
+        self.targetB = self.field + self.regsize
 
         self.seqman = SequenceManager(self.reference)
         self.genelist.load()
@@ -576,8 +634,8 @@ more gene names, or (if preceded by @) a file containing gene names, one per lin
         pos1.sort(key=lambda p: abs(regstart - p))
         pos2 = findCandidatePositions(positions, self.ncandout, regend, 1) + findCandidatePositions(positions, self.ncandin, regend, -1)
         pos2.sort(key=lambda p: abs(regend - p))
-        oligos1 = [ findOptimalMT(seq.seq, start, 1) for start in pos1 ]
-        oligos2 = [ findOptimalMT(seq.seq, start, 1) for start in pos2 ]
+        oligos1 = [ self.findOptimalMT(seq.seq, start, 1) for start in pos1 ]
+        oligos2 = [ self.findOptimalMT(seq.seq, start, 1) for start in pos2 ]
 
         # Find best pair
         best = None
@@ -586,11 +644,12 @@ more gene names, or (if preceded by @) a file containing gene names, one per lin
             for b in oligos2:
                 if a and b:
                     # See if we can find Oligo3
-                    c = findOptimalMT(seq.seq, b.start, -1, self.minlength, self.maxlength)
+                    c = self.findOptimalMT(seq.seq, b.start, -1)
                     if c:
                         t = Triple(a, b, c)
-                        t.score = self.score(t)
-                        triples.append(t)
+                        if self.regmin <= t.size <= self.regmax:
+                            t.score = self.score(t)
+                            triples.append(t)
         triples.sort(key=lambda t: t.score)
         return triples[:self.maxtriples]
 
@@ -599,11 +658,14 @@ more gene names, or (if preceded by @) a file containing gene names, one per lin
         s2 = (t.oligo2.mt - 65)**2
         s3 = (t.oligo3.mt - 65)**2
         s4 = t.tmspread**2
-        size = t.size
-        if size > 0:
-            s5 = self.weightlen1 * size**2
-        else:
-            s5 = self.weightlen2 * size**2
+        if self.sizemethod == "s":
+            size = t.size - self.regsize
+            if size > 0:
+                s5 = self.weightlen1 * size
+            else:
+                s5 = self.weightlen2 * size
+        elif self.sizemethod == "t":
+            s5 = self.weightlen1 * (t.oligo1.start - self.targetA)**2 + self.weightlen2 * (t.oligo2.start - self.targetB)**2
         return self.weightmt*(s1 + s2 + s3 + s4) + s5
 
     def randomTripleset(self):
