@@ -291,6 +291,10 @@ class Main(object):
     def parseArgs(self, args):
         if "-h" in args or "--help" in args:
             return self.usage(args)
+        if not checkBedtools():
+            sys.stderr.write("Error: bedtools not found. This program requires bedtools to run.\n")
+            sys.exit(2)
+
         prev = ""
         for a in args:
             if prev == "-o":
@@ -331,7 +335,7 @@ class Main(object):
                 self.maxover = 100.0 / int(a)
                 prev = ""
             elif prev == "-mu":
-                self.maxover = 1,0 - (100.0 / int(a))
+                self.maxunder = 1,0 - (100.0 / int(a))
                 prev = ""
             elif prev == "-S":
                 self.sizemethod = a
@@ -460,12 +464,12 @@ and ws=3. Component E of the weight is computed in the following ways.
 If -S is "s":
 
   Predicted amplicon size is 520, which is larger than the desired size (500),
-  therefore E = 520*2 = 1040
+  therefore E = 520*2 = 1040.
 
 If -S is "t":
 
   The distance between A and t1 is 30, and between B and t2 is 10. Therefore
-  E = 900*2 + 100*3 = 1800 + 300 = 2100
+  E = (30^2)*2 + (10^2)* 2 = 900*2 + 100*3 = 1800 + 300 = 2100.
 
 """)
         else:
@@ -482,12 +486,16 @@ more gene names, or (if preceded by @) a file containing gene names, one per lin
   -o O | Write output to file O (default: standard output).
   -f   | Write target sequences to separate FASTA files.
   -F F | Write target sequences to single FASTA file F.
+  -tm3 | Use primer3 method to compute Tm (default: builtin method).
 
-\x1b[1mDesign options:\x1b[0m
+\x1b[1mDesign options (see -h design for details):\x1b[0m
 
-  -u U | Number of bp upstream of TSS (default: {}).
-  -d D | Number of bp downstream of TSS (default: {}).
-  -s S | Number of bp upstream/downstream of regions of interest (default: {}).
+  -u U  | Number of bp upstream of TSS (default: {}).
+  -d D  | Number of bp downstream of TSS (default: {}).
+  -s S  | Number of bp upstream/downstream of regions of interest (default: {}).
+  -mo O | Maximum % increase of amplicon size (default: {}%).
+  -mu U | Maximum % decrease of amplicon size (default: {}%).
+  -S A  | Amplicon sizing method, one of `s' or `t' (default: {}).
 
 \x1b[1mWeight options (see -h weight for details):\x1b[0m
 
@@ -501,9 +509,19 @@ more gene names, or (if preceded by @) a file containing gene names, one per lin
   -n N | Perform N rounds of global optimization (default: {}).
   -l   | Local only - do not perform global optimization.
 
+\x1b[1mRequirements:\x1b[0m
+
+  bedtools
+
+  primer3-py (only if useing the -tm3 option).
+    Available at: https://pypi.org/project/primer3-py/
+
 (c) 2020, University of Florida Research Foundation.
 
-""".format(self.upstream, self.downstream, self.field, self.weightmt, self.weightlen1, self.weightlen2, self.nrounds))
+""".format(self.upstream, self.downstream, self.field, 
+           int(self.maxover * 100), int(self.maxunder * 100), self.sizemethod,
+           self.weightmt, self.weightlen1, self.weightlen2, 
+           self.nrounds))
         return False
 
     def run(self):
@@ -714,9 +732,6 @@ more gene names, or (if preceded by @) a file containing gene names, one per lin
 
 if __name__ == "__main__":
     args = sys.argv[1:]
-    if not checkBedtools():
-        sys.stderr.write("Error: bedtools not found. This program requires bedtools to run.\n")
-        sys.exit(2)
     M = Main()
     if M.parseArgs(args):
         M.banner(sys.stderr)
