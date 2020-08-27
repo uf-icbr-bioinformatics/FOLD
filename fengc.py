@@ -559,7 +559,10 @@ more gene names, or (if preceded by @) a file containing gene names, one per lin
             if gcoords[i][3] == '-':
                 seq.seq = revcomp(seq.seq)
             seq.name = gnames[i]
+
+            # Here's where we find the best oligo triple for this sequence
             seq.triples = self.findOptimalOligos(seq, regstart, regend) # List of triples, best first
+
             if seq.triples:
                 best = seq.best = seq.triples[0]
                 sys.stderr.write("  {:20}{}bp   {:.1f}  {}%   {:.1f}  {}%   {:.1f}  {}%\n".format(
@@ -627,6 +630,12 @@ more gene names, or (if preceded by @) a file containing gene names, one per lin
             # We want GC% between 40 and 65
             if gcperc < 0.4 or gcperc > 0.65:
                 continue
+
+            # Check hairpin formation
+            if self.mt_primer3:
+                hairpin_info = primer3.calcHairpin(oligo)
+                if hairpin_info.structure_found = True and hairpin_info.ds <= -9 and hairpin_info >= 50:
+                    continue
 
             # Compute MT
             if self.mt_primer3:
