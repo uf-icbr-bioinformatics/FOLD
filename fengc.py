@@ -267,6 +267,8 @@ class Main(object):
     maxmt = 68
     mt_primer3 = False          # -tm3 Use primer3-py to compute Tm?
     heterodimers = False        # Check for heterodimers formation (only if primer3-py is available)
+    pr3_tm = 50                 # Tm for hairpin / heterodimer computation
+    pr3_ds = -9                 # ds for hairpin / heterodimer computation
 
     maxover = 0.15              # -mo Amplicon size can increase by this much
     maxunder = 0.05             # -mu Amplicon size can decrease by this much
@@ -347,7 +349,13 @@ class Main(object):
             elif prev == "-D":
                 self.heterodimers = a
                 prev = ""
-            elif a in ["-o", "-g", "-u", "-d", "-s", "-wm", "-wl", "-ws", "-w", "-n", "-F", "-mo", "-mu", "-S", "-D"]:
+            elif prev == "-pt":
+                self.pr3_tm = int(a)
+                prev = ""
+            elif prev == "-pd":
+                self.pr3_ds = int(a)
+                prev = ""
+            elif a in ["-o", "-g", "-u", "-d", "-s", "-wm", "-wl", "-ws", "-w", "-n", "-F", "-mo", "-mu", "-S", "-D", "-pt", "-pd"]:
                 prev = a
             elif a == "-f":
                 self.toFasta = True
@@ -623,13 +631,15 @@ more gene names, or (if preceded by @) a file containing gene names, one per lin
 
     def checkHeterodimersAux(self, o1, o2, out):
         het_info = primer3.calcHeterodimer(o1.sequence, o2.sequence)
-        if het_info.structure_found == True and het_info.ds <= -9 and het_info.tm >= 50:
-            self._nhet += 1
-            out.write("{}\t{}\t{}\n".format(o1.sequence, o2.sequence, het_info.tm))
-            if "H" not in o1.flags:
-                o1.flags += "H"
-            if "H" not in o2.flags:
-                o1.flags += "H"
+        if het_info.structure_found == True:
+            #sys.stderr.write("Heterodimer: {} {}\n".format(het_info.ds, het_info.tm))
+            if het_info.ds <= self.pr3_ds and het_info.tm >= self.pr3_tm:
+                self._nhet += 1
+                out.write("{}\t{}\t{}\n".format(o1.sequence, o2.sequence, het_info.tm))
+                if "H" not in o1.flags:
+                    o1.flags += "H"
+                if "H" not in o2.flags:
+                    o1.flags += "H"
 
     def writeOutput(self):
         sys.stderr.write("  Writing oligo information for {} genes to {}.\n".format(len(self.sequences), self.outfile))
@@ -681,8 +691,9 @@ more gene names, or (if preceded by @) a file containing gene names, one per lin
             # Check hairpin formation
             if self.mt_primer3:
                 hairpin_info = primer3.calcHairpin(oligo)
-                if hairpin_info.structure_found == True and hairpin_info.ds <= -9 and hairpin_info.tm >= 50:
-                    continue
+                if hairpin_info.structure_found == True:
+                    if hairpin_info.ds <= self.pr3_ds and hairpin_info.tm >= self.pr3_tm:
+                        continue
 
             # Compute MT
             if self.mt_primer3:
