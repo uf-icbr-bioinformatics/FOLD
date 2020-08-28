@@ -9,7 +9,7 @@ import subprocess as sp
 import importlib
 
 try:
-    importlib.import_module('primer3')
+    primer3 = importlib.import_module('primer3')
     HAS_PRIMER3 = True
 except ImportError:
     HAS_PRIMER3 = False
@@ -79,7 +79,8 @@ class Oligo(object):
     gcperc = 0.0
     mt = 0
     sequence = ""
-    
+    flags = ""
+
     def __init__(self, seq, start, direction, bestlen, bestmt):
         #print (start, direction, bestlen, bestmt)
         if direction == 1:
@@ -169,11 +170,11 @@ class SequenceManager(object):
         seqs = []
         proc = sp.Popen("bedtools getfasta -fi {} -bed /dev/stdin".format(self.reference), shell=True, stdin=sp.PIPE, stdout=sp.PIPE)
         for intv in intervals:
-            proc.stdin.write("{}\t{}\t{}\n".format(intv[0], intv[1], intv[2]))
+            proc.stdin.write("{}\t{}\t{}\n".format(intv[0], intv[1], intv[2]).encode('utf-8'))
         proc.stdin.close()
         for intv in intervals:
-            name = proc.stdout.readline().rstrip("\n")
-            seq = proc.stdout.readline().rstrip("\n").upper()
+            name = proc.stdout.readline().decode('utf-8').rstrip("\n")
+            seq = proc.stdout.readline().decode('utf-8').rstrip("\n").upper()
             s = Sequence(name, seq)
             s.chrom = intv[0]
             s.start = intv[1]
@@ -208,6 +209,7 @@ class GTFParser(object):
 
     def load(self):
         sys.stderr.write("Loading genes from GTF file {}: \x1b[s".format(self.filename))
+        sys.stderr.flush()
         n = 0
         with open(self.filename, "r") as f:
             c = csv.reader(f, delimiter='\t')
@@ -226,6 +228,7 @@ class GTFParser(object):
                     n += 1
                     if n % 5000 == 0:
                         sys.stderr.write("\x1b[u{}".format(n))
+                        sys.stderr.flush()
         sys.stderr.write("\x1b[u{} genes loaded.\n".format(len(self.genes)))
 
     def get(self, name):
@@ -263,11 +266,12 @@ class Main(object):
     minmt = 62
     maxmt = 68
     mt_primer3 = False          # -tm3 Use primer3-py to compute Tm?
+    heterodimers = False        # Check for heterodimers formation (only if primer3-py is available)
 
     maxover = 0.15              # -mo Amplicon size can increase by this much
     maxunder = 0.05             # -mu Amplicon size can decrease by this much
     sizemethod = "s"            # -S Method to weight amplicon size: "s" (size), "t" (targets)
-
+    
     # Computed
     regsize = 500               # Desired amplicong size
     regmax = 0                  # Maximum amplicon size
@@ -340,7 +344,10 @@ class Main(object):
             elif prev == "-S":
                 self.sizemethod = a
                 prev = ""
-            elif a in ["-o", "-g", "-u", "-d", "-s", "-wm", "-wl", "-ws", "-w", "-n", "-F", "-mo", "-mu", "-S"]:
+            elif prev == "-D":
+                self.heterodimers = a
+                prev = ""
+            elif a in ["-o", "-g", "-u", "-d", "-s", "-wm", "-wl", "-ws", "-w", "-n", "-F", "-mo", "-mu", "-S", "-D"]:
                 prev = a
             elif a == "-f":
                 self.toFasta = True
@@ -487,6 +494,7 @@ more gene names, or (if preceded by @) a file containing gene names, one per lin
   -f   | Write target sequences to separate FASTA files.
   -F F | Write target sequences to single FASTA file F.
   -tm3 | Use primer3 method to compute Tm (default: builtin method).
+  -D D | Check for potential heterodimers, writing them to file D.
 
 \x1b[1mDesign options (see -h design for details):\x1b[0m
 
@@ -512,8 +520,7 @@ more gene names, or (if preceded by @) a file containing gene names, one per lin
 \x1b[1mRequirements:\x1b[0m
 
   bedtools
-
-  primer3-py (only if useing the -tm3 option).
+  primer3-py (only if using the -tm3 or -D options).
     Available at: https://pypi.org/project/primer3-py/
 
 (c) 2020, University of Florida Research Foundation.
@@ -578,11 +585,51 @@ more gene names, or (if preceded by @) a file containing gene names, one per lin
         if not self.local:
             self.globalOptimization()
 
+        # Check for heterodimers
+        if HAS_PRIMER3 and self.heterodimers:
+            self.checkHeterodimers()
+
         # Writing output
         sys.stderr.write("\n\x1b[1mWriting output:\x1b[0m\n")
         self.writeOutput()
         if self.toFasta:
             self.writeFastas(gnames)
+
+    def checkHeterodimers(self):
+        sys.stderr.write("\n\x1b[1mChecking for potential heterodimers:\x1b[0m\n")
+        self._nhet = 0
+        l = len(self.sequences)
+        with open(self.heterodimers, "w") as out:
+            out.write("#Oligo1\tOligo2\tTm\n")
+            for i in range(l):
+                one = self.sequences[i].best
+                if one:
+                    self.checkHeterodimersAux(one.oligo1, one.oligo2, out)
+                    self.checkHeterodimersAux(one.oligo1, one.oligo3, out)
+                    self.checkHeterodimersAux(one.oligo2, one.oligo3, out)
+                    for j in range(i+1, l):
+                        two = self.sequences[j].best
+                        if two:
+                            self.checkHeterodimersAux(one.oligo1, two.oligo1, out)
+                            self.checkHeterodimersAux(one.oligo1, two.oligo2, out)
+                            self.checkHeterodimersAux(one.oligo1, two.oligo3, out)
+                            self.checkHeterodimersAux(one.oligo2, two.oligo1, out)
+                            self.checkHeterodimersAux(one.oligo2, two.oligo2, out)
+                            self.checkHeterodimersAux(one.oligo2, two.oligo3, out)
+                            self.checkHeterodimersAux(one.oligo3, two.oligo1, out)
+                            self.checkHeterodimersAux(one.oligo3, two.oligo2, out)
+                            self.checkHeterodimersAux(one.oligo3, two.oligo3, out)
+        sys.stderr.write("  {} potential heterodimers found, written to file {}\n".format(self._nhet, self.heterodimers))
+
+    def checkHeterodimersAux(self, o1, o2, out):
+        het_info = primer3.calcHeterodimer(o1.sequence, o2.sequence)
+        if het_info.structure_found == True and het_info.ds <= -9 and het_info.tm >= 50:
+            self._nhet += 1
+            out.write("{}\t{}\t{}\n".format(o1.sequence, o2.sequence, het_info.tm))
+            if "H" not in o1.flags:
+                o1.flags += "H"
+            if "H" not in o2.flags:
+                o1.flags += "H"
 
     def writeOutput(self):
         sys.stderr.write("  Writing oligo information for {} genes to {}.\n".format(len(self.sequences), self.outfile))
@@ -634,12 +681,12 @@ more gene names, or (if preceded by @) a file containing gene names, one per lin
             # Check hairpin formation
             if self.mt_primer3:
                 hairpin_info = primer3.calcHairpin(oligo)
-                if hairpin_info.structure_found = True and hairpin_info.ds <= -9 and hairpin_info >= 50:
+                if hairpin_info.structure_found == True and hairpin_info.ds <= -9 and hairpin_info.tm >= 50:
                     continue
 
             # Compute MT
             if self.mt_primer3:
-                thismt = primer3.caclTm(oligo)
+                thismt = primer3.calcTm(oligo)
             else:
                 thismt = mt(gc, l)
 
@@ -721,6 +768,7 @@ more gene names, or (if preceded by @) a file containing gene names, one per lin
         sys.stderr.write("\n\x1b[1mGlobal optimization:\x1b[0m\n")
         sys.stderr.write("  Performing MonteCarlo optimization, {:,} rounds (ctrl-c to interrupt)\n".format(self.nrounds))
         sys.stderr.write("  \x1b[s")
+        sys.stderr.flush()
         bestvar = 100000
         try:
             for i in range(self.nrounds):
@@ -733,6 +781,7 @@ more gene names, or (if preceded by @) a file containing gene names, one per lin
                     update = True
                 if update or i % 10000 == 0:
                     sys.stderr.write("\x1b[uRound: {:,}, Best variance: {:.3f}".format(i, bestvar))
+                    sys.stderr.flush()
         except KeyboardInterrupt:
             pass
         sys.stderr.write("\n  {:,} rounds done, best variance={:.3f}\n".format(i+1, bestvar))
