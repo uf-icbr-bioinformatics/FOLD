@@ -496,13 +496,15 @@ more gene names, or (if preceded by @) a file containing gene names, one per lin
 
 \x1b[1mGeneral options:\x1b[0m
 
-  -g G | Use gene database G (in GTF or GFF format). Default: a file with the same
-         name as the reference file, with extension .gtf or .gff (lower or uppercase).
-  -o O | Write output to file O (default: standard output).
-  -f   | Write target sequences to separate FASTA files.
-  -F F | Write target sequences to single FASTA file F.
-  -tm3 | Use primer3 method to compute Tm (default: builtin method).
-  -D D | Check for potential heterodimers, writing them to file D.
+  -g G  | Use gene database G (in GTF or GFF format). Default: a file with the same
+          name as the reference file, with extension .gtf or .gff (lower or uppercase).
+  -o O  | Write output to file O (default: standard output).
+  -f    | Write target sequences to separate FASTA files.
+  -F F  | Write target sequences to single FASTA file F.
+  -tm3  | Use primer3 method to compute Tm (default: builtin method).
+  -D D  | Check for potential heterodimers, writing them to file D.
+  -pt T | Limit temperature for hairpin/heterodimers (default: {}).
+  -pd D | Limit Ds for hairpin/heterodimers (default: {}).
 
 \x1b[1mDesign options (see -h design for details):\x1b[0m
 
@@ -533,7 +535,7 @@ more gene names, or (if preceded by @) a file containing gene names, one per lin
 
 (c) 2020, University of Florida Research Foundation.
 
-""".format(self.upstream, self.downstream, self.field, 
+""".format(self.pr3_tm, self.pr3_ds, self.upstream, self.downstream, self.field, 
            int(self.maxover * 100), int(self.maxunder * 100), self.sizemethod,
            self.weightmt, self.weightlen1, self.weightlen2, 
            self.nrounds))
