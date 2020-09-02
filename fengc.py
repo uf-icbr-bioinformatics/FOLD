@@ -208,7 +208,7 @@ class GTFParser(object):
         return None
 
     def load(self):
-        sys.stderr.write("Loading genes from GTF file {}: \x1b[s".format(self.filename))
+        sys.stderr.write("Loading genes from GTF file {}: ".format(self.filename))
         sys.stderr.flush()
         n = 0
         with open(self.filename, "r") as f:
@@ -227,9 +227,9 @@ class GTFParser(object):
                     self.genes[name] = [chrom, start, end, strand]
                     n += 1
                     if n % 5000 == 0:
-                        sys.stderr.write("\x1b[u{}".format(n))
+                        sys.stderr.write("\x1b[GLoading genes from GTF file {}: {}".format(self.filename, n))
                         sys.stderr.flush()
-        sys.stderr.write("\x1b[u{} genes loaded.\n".format(len(self.genes)))
+        sys.stderr.write("\x1b[GLoading genes from GTF file {}: {} genes loaded.\n".format(self.filename, len(self.genes)))
 
     def get(self, name):
         return self.genes[name] if name in self.genes else None
@@ -780,7 +780,6 @@ more gene names, or (if preceded by @) a file containing gene names, one per lin
     def globalOptimization(self):
         sys.stderr.write("\n\x1b[1mGlobal optimization:\x1b[0m\n")
         sys.stderr.write("  Performing MonteCarlo optimization, {:,} rounds (ctrl-c to interrupt)\n".format(self.nrounds))
-        sys.stderr.write("  \x1b[s")
         sys.stderr.flush()
         bestvar = 100000
         try:
@@ -793,7 +792,7 @@ more gene names, or (if preceded by @) a file containing gene names, one per lin
                     bestvar = var
                     update = True
                 if update or i % 10000 == 0:
-                    sys.stderr.write("\x1b[uRound: {:,}, Best variance: {:.3f}".format(i, bestvar))
+                    sys.stderr.write("\x1b[G  Round: {:,}, Best variance: {:.3f}".format(i, bestvar))
                     sys.stderr.flush()
         except KeyboardInterrupt:
             pass
