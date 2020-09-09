@@ -263,8 +263,8 @@ class Main(object):
     field = 2000                # -s
     minlength = 8
     maxlength = 30
-    minmt = 62
-    maxmt = 68
+    minmt = 62                  # -tl
+    maxmt = 68                  # -th
     mt_primer3 = False          # -tm3 Use primer3-py to compute Tm?
     heterodimers = False        # Check for heterodimers formation (only if primer3-py is available)
     pr3_tm = 50                 # Tm for hairpin / heterodimer computation
@@ -318,6 +318,12 @@ class Main(object):
             elif prev == "-s":
                 self.field = int(a)
                 prev = ""
+            elif prev == "-tl":
+                self.minmt = float(a)
+                prev = ""
+            elif prev == "-th":
+                self.maxmt = float(a)
+                prev = ""
             elif prev == "-wm":
                 self.weightmt = float(a)
                 prev = ""
@@ -355,7 +361,7 @@ class Main(object):
             elif prev == "-pd":
                 self.pr3_ds = int(a)
                 prev = ""
-            elif a in ["-o", "-g", "-u", "-d", "-s", "-wm", "-wl", "-ws", "-w", "-n", "-F", "-mo", "-mu", "-S", "-D", "-pt", "-pd"]:
+            elif a in ["-o", "-g", "-u", "-d", "-s", "-wm", "-wl", "-ws", "-w", "-n", "-F", "-mo", "-mu", "-S", "-D", "-pt", "-pd", "-tl", "-th"]:
                 prev = a
             elif a == "-f":
                 self.toFasta = True
@@ -501,8 +507,13 @@ more gene names, or (if preceded by @) a file containing gene names, one per lin
   -o O  | Write output to file O (default: standard output).
   -f    | Write target sequences to separate FASTA files.
   -F F  | Write target sequences to single FASTA file F.
-  -tm3  | Use primer3 method to compute Tm (default: builtin method).
   -D D  | Check for potential heterodimers, writing them to file D.
+
+\x1b[1mTm options:
+  
+  -tl L | Set minimum allowed Tm (default: {}).
+  -th H | Set maximum allowed Tm (default: {}).
+  -tm3  | Use primer3 method to compute Tm (default: builtin method).
   -pt T | Limit temperature for hairpin/heterodimers (default: {}).
   -pd D | Limit Ds for hairpin/heterodimers (default: {}).
 
@@ -535,7 +546,7 @@ more gene names, or (if preceded by @) a file containing gene names, one per lin
 
 (c) 2020, University of Florida Research Foundation.
 
-""".format(self.pr3_tm, self.pr3_ds, self.upstream, self.downstream, self.field, 
+""".format(self.minmt, self.maxmt, self.pr3_tm, self.pr3_ds, self.upstream, self.downstream, self.field, 
            int(self.maxover * 100), int(self.maxunder * 100), self.sizemethod,
            self.weightmt, self.weightlen1, self.weightlen2, 
            self.nrounds))
@@ -601,9 +612,14 @@ more gene names, or (if preceded by @) a file containing gene names, one per lin
 
         # Writing output
         sys.stderr.write("\n\x1b[1mWriting output:\x1b[0m\n")
-        self.writeOutput()
+        nbad = self.writeOutput()
         if self.toFasta:
             self.writeFastas(gnames)
+        sys.stderr.write("\n\x1b[1mSummary:\x1b[0m\n")
+        sys.stderr.write("  {} input genes\n".format(len(self.sequences)))
+        sys.stderr.write("  Oligo design \x1b[32msuccessful\x1b[0m for \x1b[1m{}\x1b[0m genes\n".format(len(self.sequences) - nbad))
+        sys.stderr.write("  Oligo design \x1b[31mfailed    \x1b[0m for \x1b[1m{}\x1b[0m genes\n".format(nbad))
+        sys.stderr.write("\n")
 
     def checkHeterodimers(self):
         sys.stderr.write("\n\x1b[1mChecking for potential heterodimers:\x1b[0m\n")
@@ -644,20 +660,23 @@ more gene names, or (if preceded by @) a file containing gene names, one per lin
                     o1.flags += "H"
 
     def writeOutput(self):
+        nbad = 0
         sys.stderr.write("  Writing oligo information for {} genes to {}.\n".format(len(self.sequences), self.outfile))
         with open(self.outfile, "w") as out:
             out.write("Gene\tOrientation\tGenomic coordinates\tOligo positions\tPCR Product Size\tPCR Product GC%\tO1-sequence\tO1-length\tO1-MT\tO1-GC%\tO2-sequence\tO2-length\tO2-MT\tO2-GC%\tO3-sequence\tO3-length\tO3-MT\tO3-GC%\n")
             for i in range(len(self.sequences)):
                 seq = self.sequences[i]
                 if not seq.valid:
+                    nbad += 1
                     continue
                 best = seq.best
                 out.write("{}\t{}\t{}:{:,}-{:,}\t{}-{}\t{}\t{}\t{}\t{}\t{:.1f}\t{}\t{}\t{}\t{:.1f}\t{}\t{}\t{}\t{:.1f}\t{}\n".format(
                     seq.name, "F" if seq.strand == "+" else "R", seq.chrom, seq.start, seq.end, best.oligo1.start+1, best.oligo2.start+1,
                     best.size, int(100*seq.bestGC()),
-                    revcomp(best.oligo1.sequence)+"/"+U1, len(best.oligo1.sequence), best.oligo1.mt, int(100*best.oligo1.gcperc),
-                    revcomp(best.oligo2.sequence)+"/"+U1, len(best.oligo2.sequence), best.oligo2.mt, int(100*best.oligo2.gcperc),
-                    revcomp(best.oligo3.sequence)+"/"+U2, len(best.oligo3.sequence), best.oligo3.mt, int(100*best.oligo3.gcperc)))
+                    revcomp(best.oligo1.sequence)+U1, len(best.oligo1.sequence), best.oligo1.mt, int(100*best.oligo1.gcperc),
+                    revcomp(best.oligo2.sequence)+U1, len(best.oligo2.sequence), best.oligo2.mt, int(100*best.oligo2.gcperc),
+                    revcomp(best.oligo3.sequence)+U2, len(best.oligo3.sequence), best.oligo3.mt, int(100*best.oligo3.gcperc)))
+        return nbad
 
     def writeFastas(self, gnames):
         if self.toFasta is True:
