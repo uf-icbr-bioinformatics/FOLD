@@ -254,7 +254,7 @@ class Report(object):
 
     def __init__(self, out):
         self.out = out
-        self.out.write("*** FenGC Report - started {}\n\n".format(datetime.now()))
+        self.out.write("### FenGC Report - started {} ###\n\n".format(datetime.now()))
 
     def badGenes(self, badgenes):
         self.out.write("*** The following {} genes were not found in the gene database:\n\n".format(len(badgenes)))
@@ -427,6 +427,8 @@ class Main(object):
                 else:
                     self.genes.append(a)
 
+        self.genes.sort()
+
         if not self.reference:
             return self.usage()
 
@@ -483,7 +485,7 @@ pair with the optimal score. The score is the sum of five components:
   D. Square of the difference between the highest and lowest Tms.
   E. Amplicon size factor.
 
-The first three components are multiplied by weight `wm'. Component E can be computed 
+The first four components are multiplied by weight `wm'. Component E can be computed 
 in two different ways, depending on the value of the -S argument. If the value is 
 "s" (the default), E is the predicted amplicon size (i.e. the distance between the 
 start of Oligo1 and the start of Oligo2) multiplied by `wl' if it is larger than 
@@ -516,8 +518,8 @@ Therefore, t1 is at position 600 and t2 at position 1100.
 
 
          t1                                   TSS       t2
-         [              400bp                 |  100bp  ]
-----------------------------------------------+------------------
+         |              400bp                 |  100bp  |
+---------[####################################+#########]--------
        ^                                               ^
        A                                               B
 
@@ -535,6 +537,28 @@ If -S is "t":
   E = (30^2)*2 + (10^2)* 2 = 900*2 + 100*3 = 1800 + 300 = 2100.
 
 """)
+        elif "design" in args:
+            sys.stdout.write("""\x1b[1mAmplicon design:\x1b[0m
+
+These are the steps used by FenGC to design an amplicon starting from the
+TSS position of a gene.
+
+* The `desired amplicon' by default extends from 400bp upstream of the TSS
+  to 100bp downstream of the TSS. These values can be changed with the -u
+  and -d options respectively.
+
+* The two options -mo and -mu represents how much the amplicon size is allowed
+  to grow or shrink, in percentage. The default values are 15 and 5, which means
+  that the amplicon size can range from 475bp to 575bp.
+
+* The program looks for all potential oligos around the left and right boundaries
+  of the desired amplicon, and ranks them according to the procedure described in
+  `-h weight'. This is done separately for OligoA, OligoB, and OligoC, and the
+  set with the best score is chosen as the optimal triple (this can be changed
+  later if global optimization is enabled).
+
+""")              
+
         else:
             sys.stdout.write("""
 \x1b[1mUsage: fengc.py [options] reference genes...\x1b[0m
@@ -549,6 +573,7 @@ more gene names, or (if preceded by @) a file containing gene names, one per lin
   -o O  | Write output to file O (default: standard output).
   -f    | Write target sequences to separate FASTA files.
   -F F  | Write target sequences to single FASTA file F.
+  -r R  | Write report to file R (default: {}).
   -D    | Check for potential heterodimers.
 
 \x1b[1mTm options:\x1b[0m
@@ -588,7 +613,7 @@ more gene names, or (if preceded by @) a file containing gene names, one per lin
 
 (c) 2020, University of Florida Research Foundation.
 
-""".format(self.minmt, self.maxmt, self.pr3_tm, self.pr3_ds, self.upstream, self.downstream, self.field, 
+""".format(self.reportfile, self.minmt, self.maxmt, self.pr3_tm, self.pr3_ds, self.upstream, self.downstream, self.field, 
            int(self.maxover * 100), int(self.maxunder * 100), self.sizemethod,
            self.weightmt, self.weightlen1, self.weightlen2, 
            self.nrounds))
@@ -605,9 +630,11 @@ more gene names, or (if preceded by @) a file containing gene names, one per lin
             self.targetA = self.field
             self.targetB = self.field + self.regsize
 
+            sys.stderr.write("Input genes:                {}\n".format(len(self.genes)))
             sys.stderr.write("Amplicon size range:        {} - {}\n".format(self.regmin, self.regmax))
             sys.stderr.write("Optimal amplicon positions: TSS-{}, TSS+{}\n".format(self.upstream, self.downstream))
             sys.stderr.write("Tm range:                   {} - {}\n".format(self.minmt, self.maxmt))
+            sys.stderr.write("\n")
             self.seqman = SequenceManager(self.reference)
             self.genelist.load()
 
