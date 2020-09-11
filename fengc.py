@@ -767,7 +767,7 @@ more gene names, or (if preceded by @) a file containing gene names, one per lin
                     best.size, int(100*seq.bestGC()),
                     revcomp(best.oligo1.sequence)+U1, len(best.oligo1.sequence), best.oligo1.mt, int(100*best.oligo1.gcperc),
                     revcomp(best.oligo2.sequence)+U1, len(best.oligo2.sequence), best.oligo2.mt, int(100*best.oligo2.gcperc),
-                    revcomp(best.oligo3.sequence)+U2, len(best.oligo3.sequence), best.oligo3.mt, int(100*best.oligo3.gcperc)))
+                    U2+revcomp(best.oligo3.sequence), len(best.oligo3.sequence), best.oligo3.mt, int(100*best.oligo3.gcperc)))
         return nbad
 
     def writeFastas(self, gnames):
