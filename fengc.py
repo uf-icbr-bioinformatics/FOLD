@@ -184,6 +184,27 @@ class SequenceManager(object):
             seqs.append(s)
         return seqs
 
+# Simple Gene DB
+
+class Gene(object):
+    accession = ""
+    name = ""
+    transcripts = []
+
+    def __init__(self, accession, name):
+        self.accession = accession
+        self.name = name
+        self.transcripts = []
+
+    def addTranscript(self, accession, chrom, start, end, strand):
+        """Add a new transcript with the given properties to this gene, unless 
+one with the same TSS already exists."""
+        for tr in self.transcripts:
+            if (strand == '+' and start == tr[2]) or (strand == '-' and end == tr[3]):
+                return 0          # already present, ignore
+        self.transcripts.append([self.name + ":" + accession, chrom, start, end, strand])
+        return 1
+
 # Simple GTF parser
 
 class GTFParser(object):
@@ -208,8 +229,20 @@ class GTFParser(object):
                 return p[10:].strip('"')
         return None
 
+    def getNames(self, annots):
+        wanted = ["gene_name", "gene_id", "transcript_id"]
+        d = {}
+        parts = annots.split(";")
+        for p in parts:
+            p = p.lstrip()
+            for w in wanted:
+                if p.startswith(w):
+                    d[w] = p[len(w)+1:].strip('"')
+        return d
+
     def load(self):
-        sys.stderr.write("Loading genes from GTF file {}: ".format(self.filename))
+        bytx = {}
+        sys.stderr.write("Loading transcripts from GTF file {}: ".format(self.filename))
         sys.stderr.flush()
         n = 0
         with open(self.filename, "r") as f:
@@ -217,20 +250,23 @@ class GTFParser(object):
             for line in c:
                 if line[0][0] == '#':
                     continue
-                if line[2] != "gene":
-                    continue
-                chrom = self.fixChrom(line[0])
-                start = int(line[3])
-                end = int(line[4])
-                strand = line[6]
-                name = self.getName(line[8])
-                if name:
-                    self.genes[name] = [chrom, start, end, strand]
-                    n += 1
-                    if n % 5000 == 0:
-                        sys.stderr.write("\x1b[GLoading genes from GTF file {}: {}".format(self.filename, n))
-                        sys.stderr.flush()
-        sys.stderr.write("\x1b[GLoading genes from GTF file {}: {} genes loaded.\n".format(self.filename, len(self.genes)))
+                if line[2] == "gene":
+                    names = self.getNames(line[8])
+                    g = Gene(names["gene_id"], names["gene_name"])
+                    self.genes[g.name] = g
+                    bytx[g.accession] = g
+                elif line[2] == "transcript":
+                    names = self.getNames(line[8])
+                    gacc = names["gene_id"]
+                    if gacc in bytx:
+                        g = bytx[gacc]
+                        n += g.addTranscript(names["transcript_id"],
+                                             self.fixChrom(line[0]),
+                                             int(line[3]), int(line[4]), line[6])
+                        if n % 5000 == 0:
+                            sys.stderr.write("\x1b[GLoading transcripts from GTF file {}: {}".format(self.filename, n))
+                            sys.stderr.flush()
+        sys.stderr.write("\x1b[GLoading transcripts from GTF file {}: {} genes, {} transcripts loaded.\n".format(self.filename, len(self.genes), n))
 
     def get(self, name):
         return self.genes[name] if name in self.genes else None
@@ -246,6 +282,55 @@ class GFFParser(GTFParser):
             if p.startswith("Name="):
                 return p[5:]
         return None
+
+    def getNames(self, annots):
+        wanted = ["Name=", "ID=gene:", "ID=transcript:", "Parent=gene:"]
+        d = {}
+        parts = annots.split(";")
+        for p in parts:
+            p = p.lstrip()
+            for w in wanted:
+                if p.startswith(w):
+                    d[w] = p[len(w):]
+        if "Name=" in d:
+            d["gene_name"] = d["Name="]
+        if "ID=gene:" in d:
+            d["gene_id"] = d["ID=gene:"]
+        if "ID=transcript:" in d:
+            d["transcript_id"] = d["ID=transcript:"]
+        if "Parent=gene:" in d:
+            d["gene_id"] = d["Parent=gene:"]
+        return d
+
+# And with a small change we also parse refFlat files.
+
+class refFlatParser(GTFParser):
+
+    def load(self):
+        sys.stderr.write("Loading transcripts from refFlat file {}: ".format(self.filename))
+        sys.stderr.flush()
+        n = 0
+        with open(self.filename, "r") as f:
+            c = csv.reader(f, delimiter='\t')
+            for line in c:
+                if line[0][0] == '#':
+                    continue
+                name = line[0]
+                txacc = line[1]
+                chrom = self.fixChrom(line[2])
+                strand = line[3]
+                start = int(line[4])
+                end = int(line[5])
+                if name in self.genes:
+                    g = self.genes[name]
+                else:
+                    g = Gene(name, name)
+                    self.genes[name] = g
+                n += g.addTranscript(txacc, chrom, start, end, strand)
+                if n % 5000 == 0:
+                    sys.stderr.write("\x1b[GLoading transcripts from refFlat file {}: {}".format(self.filename, n))
+                    sys.stderr.flush()
+        sys.stderr.write("\x1b[GLoading transcripts from refFlat file {}: {} genes, {} transcripts loaded.\n".format(self.filename, len(self.genes), n))
 
 ## Reporter
 
@@ -263,7 +348,7 @@ class Report(object):
         self.out.write("===\n\n")
 
     def badOligos(self, badoligos):
-        self.out.write("*** No valid oligos could be found for the following {} genes:\n\n".format(len(badoligos)))
+        self.out.write("*** No valid oligos could be found for the following {} transcripts:\n\n".format(len(badoligos)))
         for b in badoligos:
             self.out.write(b + "\n")
         self.out.write("===\n\n")
@@ -449,6 +534,8 @@ class Main(object):
             self.genelist = GTFParser(path)
         elif ext in [".gff", ".gff3", ".GFF", ".GFF3"]:
             self.genelist = GFFParser(path)
+        elif ext == ".txt":
+            self.genelist = refFlatParser(path)
 
         if self.genes:
             return True
@@ -642,14 +729,15 @@ more gene names, or (if preceded by @) a file containing gene names, one per lin
             badgenes = []
 
             for g in self.genes:
-                coords = self.genelist.get(g)
-                if coords:
-                    gnames.append(g)
-                    if coords[3] == '+':
-                        gcoords.append([coords[0], coords[1] - self.upstream - self.field, coords[1] + self.downstream + self.field, coords[3]])
-                    else:
-                        gcoords.append([coords[0], coords[2] - self.downstream - self.field, coords[2] + self.upstream + self.field, coords[3]])
-                    sys.stderr.write("  {:20} {}:{}-{}:{}\n".format(g, coords[0], coords[1], coords[2], coords[3]))
+                gene = self.genelist.get(g)
+                if gene:
+                    for tx in gene.transcripts:
+                        gnames.append(tx[0])
+                        if tx[4] == '+':
+                            gcoords.append([tx[1], tx[2] - self.upstream - self.field, tx[3] + self.downstream + self.field, tx[4]])
+                        else:
+                            gcoords.append([tx[1], tx[2] - self.downstream - self.field, tx[3] + self.upstream + self.field, tx[4]])
+                        sys.stderr.write("  {:30} {}:{}-{}:{}\n".format(tx[0], tx[1], tx[2], tx[3], tx[4]))
                 else:
                     badgenes.append(g)
             if badgenes:
@@ -658,25 +746,25 @@ more gene names, or (if preceded by @) a file containing gene names, one per lin
             self.sequences = self.seqman.getSequences(gcoords) # This will be a list of Sequence objects
 
             sys.stderr.write("\n\x1b[1mFinding oligo triples - best triple for each sequence:\x1b[0m\n")
-            sys.stderr.write("  \x1b[4mGene\x1b[0m                \x1b[4mSize\x1b[0m    \x1b[4m Oligo 1 \x1b[0m   \x1b[4m Oligo 2 \x1b[0m   \x1b[4m Oligo 3 \x1b[0m\n")
-            sys.stderr.write("                              MT    %GC   MT    %GC   MT    %GC\n")
+            sys.stderr.write("  \x1b[4mGene\x1b[0m                        \x1b[4mSize\x1b[0m    \x1b[4m Oligo 1 \x1b[0m   \x1b[4m Oligo 2 \x1b[0m   \x1b[4m Oligo 3 \x1b[0m\n")
+            sys.stderr.write("                                      MT    %GC   MT    %GC   MT    %GC\n")
             regstart = self.field                # Start of target region
             regend   = self.field + self.regsize # End of target region
 
             badoligos = []
-            for i in range(len(gnames)):
+            for i in range(len(self.sequences)):
                 seq = self.sequences[i]
-                if gcoords[i][3] == '-':
-                    seq.seq = revcomp(seq.seq)
                 seq.name = gnames[i]
+                if seq.strand == '-':
+                    seq.seq = revcomp(seq.seq)
 
                 # Here's where we find the best oligo triple for this sequence
                 seq.triples = self.findOptimalOligos(seq, regstart, regend) # List of triples, best first
 
                 if seq.triples:
                     best = seq.best = seq.triples[0]
-                    sys.stderr.write("  {:20}{}bp   {:.1f}  {}%   {:.1f}  {}%   {:.1f}  {}%\n".format(
-                        gnames[i], best.size,
+                    sys.stderr.write("  {:28}{}bp   {:.1f}  {}%   {:.1f}  {}%   {:.1f}  {}%\n".format(
+                        seq.name, best.size,
                         best.oligo1.mt, int(100*best.oligo1.gcperc), 
                         best.oligo2.mt, int(100*best.oligo2.gcperc), 
                         best.oligo3.mt, int(100*best.oligo3.gcperc)))
@@ -702,9 +790,9 @@ more gene names, or (if preceded by @) a file containing gene names, one per lin
             if self.toFasta:
                 self.writeFastas(gnames)
             sys.stderr.write("\n\x1b[1mSummary:\x1b[0m\n")
-            sys.stderr.write("  {} input genes\n".format(len(self.sequences)))
-            sys.stderr.write("  Oligo design \x1b[32msuccessful\x1b[0m for \x1b[1m{}\x1b[0m genes\n".format(len(self.sequences) - nbad))
-            sys.stderr.write("  Oligo design \x1b[31mfailed    \x1b[0m for \x1b[1m{}\x1b[0m genes\n".format(nbad))
+            sys.stderr.write("  {} input transcripts\n".format(len(self.sequences)))
+            sys.stderr.write("  Oligo design \x1b[32msuccessful\x1b[0m for \x1b[1m{}\x1b[0m transcripts\n".format(len(self.sequences) - nbad))
+            sys.stderr.write("  Oligo design \x1b[31mfailed    \x1b[0m for \x1b[1m{}\x1b[0m transcripts\n".format(nbad))
             sys.stderr.write("\n")
 
     def checkHeterodimers(self, rep):
@@ -770,16 +858,14 @@ more gene names, or (if preceded by @) a file containing gene names, one per lin
                     U2+revcomp(best.oligo3.sequence), len(best.oligo3.sequence), best.oligo3.mt, int(100*best.oligo3.gcperc)))
         return nbad
 
-    def writeFastas(self, gnames):
+    def writeFastas(self):
         if self.toFasta is True:
-            for i in range(len(gnames)):
-                seq = self.sequences[i]
-                seq.write(gnames[i] + ".fa", label=gnames[i] + " " + seq.coordinates())
+            for seq in self.sequences:
+                seq.write(seq.name + ".fa", label=seq.name + " " + seq.coordinates())
         else:
             with open(self.toFasta, "w") as out:
-                for i in range(len(gnames)):
-                    seq = self.sequences[i]
-                    seq.writes(out, label=gnames[i] + " " + seq.coordinates())
+                for seq in self.sequences:
+                    seq.writes(out, label=seq.name + " " + seq.coordinates())
 
     # Find optimal oligo length in a sequence giving MT as close as possible to 65 degrees
     # Returns an Oligo object
