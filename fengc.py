@@ -378,6 +378,7 @@ class Main(object):
     reportfile = "report.txt"   # -r
     seqman = None
     toFasta = False             # -F, -f
+    oligoFasta = False          # -O
     local = False               # -l If true, skips global optimization.
     
     upstream = 400              # -u
@@ -486,7 +487,10 @@ class Main(object):
                 else:
                     self.reportfile = a
                 prev = ""
-            elif a in ["-o", "-g", "-u", "-d", "-s", "-wm", "-wl", "-ws", "-w", "-n", "-F", "-mo", "-mu", "-S", "-pt", "-pd", "-tl", "-th", "-r"]:
+            elif prev == "-O":
+                self.oligoFasta = a
+                prev = ""
+            elif a in ["-o", "-g", "-u", "-d", "-s", "-wm", "-wl", "-ws", "-w", "-n", "-F", "-mo", "-mu", "-S", "-pt", "-pd", "-tl", "-th", "-r", "-O"]:
                 prev = a
             elif a == "-D":
                 self.heterodimers = True
@@ -788,7 +792,9 @@ more gene names, or (if preceded by @) a file containing gene names, one per lin
             sys.stderr.write("\n\x1b[1mWriting output:\x1b[0m\n")
             nbad = self.writeOutput()
             if self.toFasta:
-                self.writeFastas(gnames)
+                self.writeFastas()
+            if self.oligoFasta:
+                self.writeOligoFastas()
             sys.stderr.write("\n\x1b[1mSummary:\x1b[0m\n")
             sys.stderr.write("  {} input transcripts\n".format(len(self.sequences)))
             sys.stderr.write("  Oligo design \x1b[32msuccessful\x1b[0m for \x1b[1m{}\x1b[0m transcripts\n".format(len(self.sequences) - nbad))
@@ -866,6 +872,14 @@ more gene names, or (if preceded by @) a file containing gene names, one per lin
             with open(self.toFasta, "w") as out:
                 for seq in self.sequences:
                     seq.writes(out, label=seq.name + " " + seq.coordinates())
+
+    def writeOligoFastas(self):
+        with open(self.oligoFasta, "w") as out:
+            for seq in self.sequences:
+                best = seq.best
+                out.write(">{}_A\n{}\n".format(seq.name, best.oligo1.sequence))
+                out.write(">{}_B\n{}\n".format(seq.name, best.oligo2.sequence))
+                out.write(">{}_C\n{}\n".format(seq.name, best.oligo3.sequence))
 
     # Find optimal oligo length in a sequence giving MT as close as possible to 65 degrees
     # Returns an Oligo object
