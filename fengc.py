@@ -664,6 +664,7 @@ more gene names, or (if preceded by @) a file containing gene names, one per lin
   -o O  | Write output to file O (default: standard output).
   -f    | Write target sequences to separate FASTA files.
   -F F  | Write target sequences to single FASTA file F.
+  -O O  | Write oligo sequences to a FASTA file named O.
   -r R  | Write report to file R (default: {}).
   -D    | Check for potential heterodimers.
 
