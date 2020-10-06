@@ -43,7 +43,8 @@ Computation performed according to Varley et al., see: http://basic.northwestern
 
 # Reverse complement
 
-BASES = {'A': 'T', 'C': 'G', 'G': 'C', 'T': 'A', 'N': 'N'}
+BASES = {'A': 'T', 'C': 'G', 'G': 'C', 'T': 'A', 'N': 'N',
+         'a': 't', 'c': 'g', 'g': 'c', 't': 'a', 'n': 'n'}
 
 def revcomp(s):
     bases = [ BASES[b] for b in s[::-1] ]
@@ -52,7 +53,14 @@ def revcomp(s):
 # Number of GC bases in a sequence
 
 def ngc(seq):
-    return seq.count("C") + seq.count("G")
+    return seq.count("C") + seq.count("G") + seq.count("c") + seq.count("g")
+
+def nlower(seq):
+    nl = 0
+    for c in seq:
+        if c.islower():
+            nl += 1
+    return nl
 
 # Find candidate positions to test
 
@@ -136,17 +144,17 @@ class Sequence(object):
     def coordinates(self):
         return "{}:{}-{}".format(self.chrom, self.start, self.end)
 
-    def write(self, filename, label=None):
+    def write(self, filename, label=None, start=None, end=None):
         with open(filename, "w") as out:
-            self.writes(out, label=label)
+            self.writes(out, label=label, start=start, end=end)
 
-    def writes(self, out, label=None):
-        out.write(">{}\n{}\n".format(label or self.name, self.seq))
+    def writes(self, out, label=None, start=None, end=None):
+        out.write(">{}\n{}\n".format(label or self.name, self.seq[start:end]))
 
     def findVT(self):
         positions = []
         for i in range(1, len(self.seq)):
-            if self.seq[i] == 'T' and self.seq[i-1] != 'T':
+            if self.seq[i] in 'Tt' and self.seq[i-1] not in 'Tt':
                 positions.append(i)
         return positions
 
@@ -175,7 +183,7 @@ class SequenceManager(object):
         proc.stdin.close()
         for intv in intervals:
             name = proc.stdout.readline().decode('utf-8').rstrip("\n")
-            seq = proc.stdout.readline().decode('utf-8').rstrip("\n").upper()
+            seq = proc.stdout.readline().decode('utf-8').rstrip("\n")
             s = Sequence(name, seq)
             s.chrom = intv[0]
             s.start = intv[1]
@@ -380,7 +388,8 @@ class Main(object):
     toFasta = False             # -F, -f
     oligoFasta = False          # -O
     local = False               # -l If true, skips global optimization.
-    
+    transcripts = "all"         # "all" or "longest" - set by -L
+
     upstream = 400              # -u
     downstream = 100            # -d
     field = 2000                # -s
@@ -388,6 +397,9 @@ class Main(object):
     maxlength = 30
     minmt = 62                  # -tl
     maxmt = 68                  # -th
+    mingc = 40                  # -gc
+    maxgc = 65                  # -gc
+    maxrpt = 6                  # -mr
     mt_primer3 = False          # -tm3 Use primer3-py to compute Tm?
     heterodimers = False        # Check for heterodimers formation (only if primer3-py is available)
     pr3_tm = 50                 # Tm for hairpin / heterodimer computation
@@ -447,6 +459,14 @@ class Main(object):
             elif prev == "-th":
                 self.maxmt = float(a)
                 prev = ""
+            elif prev == "-gc":
+                if "," in a:
+                    parts = a.split(",")
+                    if parts[0]:
+                        self.mingc = float(parts[0])
+                    if parts[1]:
+                        self.maxgc = float(parts[1])
+                prev = ""
             elif prev == "-wm":
                 self.weightmt = float(a)
                 prev = ""
@@ -490,7 +510,10 @@ class Main(object):
             elif prev == "-O":
                 self.oligoFasta = a
                 prev = ""
-            elif a in ["-o", "-g", "-u", "-d", "-s", "-wm", "-wl", "-ws", "-w", "-n", "-F", "-mo", "-mu", "-S", "-pt", "-pd", "-tl", "-th", "-r", "-O"]:
+            elif prev == "-mr":
+                self.maxrpt = int(a)
+                prev = ""
+            elif a in ["-o", "-g", "-u", "-d", "-s", "-wm", "-wl", "-ws", "-w", "-n", "-F", "-mo", "-mu", "-S", "-pt", "-pd", "-tl", "-th", "-r", "-O", "-gc", "-mr"]:
                 prev = a
             elif a == "-D":
                 self.heterodimers = True
@@ -498,6 +521,8 @@ class Main(object):
                 self.toFasta = True
             elif a == "-l":
                 self.local = True
+            elif a == "-L":
+                self.transcripts = "longest"
             elif a == "-tm3":
                 if HAS_PRIMER3:
                     self.mt_primer3 = True
@@ -661,6 +686,7 @@ more gene names, or (if preceded by @) a file containing gene names, one per lin
 
   -g G  | Use gene database G (in GTF or GFF format). Default: a file with the same
           name as the reference file, with extension .gtf or .gff (lower or uppercase).
+  -L    | For genes having multiple isoforms, select longest one (default: select all).
   -o O  | Write output to file O (default: standard output).
   -f    | Write target sequences to separate FASTA files.
   -F F  | Write target sequences to single FASTA file F.
@@ -670,11 +696,13 @@ more gene names, or (if preceded by @) a file containing gene names, one per lin
 
 \x1b[1mTm options:\x1b[0m
   
-  -tl L | Set minimum allowed Tm (default: {}).
-  -th H | Set maximum allowed Tm (default: {}).
-  -tm3  | Use primer3 method to compute Tm (default: builtin method).
-  -pt T | Limit temperature for hairpin/heterodimers (default: {}).
-  -pd D | Limit Ds for hairpin/heterodimers (default: {}).
+  -tl L   | Set minimum allowed Tm (default: {}).
+  -th H   | Set maximum allowed Tm (default: {}).
+  -gc L,H | Set GC range to L - H (default: {},{}).
+  -tm3    | Use primer3 method to compute Tm (default: builtin method).
+  -pt T   | Limit temperature for hairpin/heterodimers (default: {}).
+  -pd D   | Limit Ds for hairpin/heterodimers (default: {}).
+  -mr R   | Maximum number of repeat bases (default: {})."
 
 \x1b[1mDesign options (see -h design for details):\x1b[0m
 
@@ -705,7 +733,7 @@ more gene names, or (if preceded by @) a file containing gene names, one per lin
 
 (c) 2020, University of Florida Research Foundation.
 
-""".format(self.reportfile, self.minmt, self.maxmt, self.pr3_tm, self.pr3_ds, self.upstream, self.downstream, self.field, 
+""".format(self.reportfile, self.minmt, self.maxmt, self.mingc, self.maxgc, self.pr3_tm, self.pr3_ds, self.maxrpt, self.upstream, self.downstream, self.field, 
            int(self.maxover * 100), int(self.maxunder * 100), self.sizemethod,
            self.weightmt, self.weightlen1, self.weightlen2, 
            self.nrounds))
@@ -714,8 +742,9 @@ more gene names, or (if preceded by @) a file containing gene names, one per lin
     def run(self):
         with open(self.reportfile, "w") as rout:
             rep = Report(rout)
-            gnames = []
-            gcoords = []
+            self.gnames = []
+            self.badgenes = []
+            self.gcoords = []
             self.regsize  = self.upstream + self.downstream # Size of target region
             self.regmax = self.regsize + int(self.regsize * self.maxover)
             self.regmin = self.regsize - int(self.regsize * self.maxunder)
@@ -723,32 +752,32 @@ more gene names, or (if preceded by @) a file containing gene names, one per lin
             self.targetB = self.field + self.regsize
 
             sys.stderr.write("Input genes:                {}\n".format(len(self.genes)))
+            sys.stderr.write("Transcript selection:       {}\n".format(self.transcripts))
             sys.stderr.write("Amplicon size range:        {} - {}\n".format(self.regmin, self.regmax))
             sys.stderr.write("Optimal amplicon positions: TSS-{}, TSS+{}\n".format(self.upstream, self.downstream))
             sys.stderr.write("Tm range:                   {} - {}\n".format(self.minmt, self.maxmt))
+            sys.stderr.write("GC% range:                  {} - {}\n".format(self.mingc, self.maxgc))
+            sys.stderr.write("Global optimization:        {}\n".format("disabled" if self.local else "enabled"))
+            if not self.local:
+                sys.stderr.write("  rounds:                   {}\n".format(self.nrounds))
+            sys.stderr.write("Heterodimers check:         {}\n".format("enabled" if self.heterodimers else "disabled"))
+            sys.stderr.write("Output files:\n")
+            sys.stderr.write("  Oligo design table:       {}\n".format(self.outfile))
+            sys.stderr.write("  Report file:              {}\n".format(self.reportfile))
+            if self.toFasta:
+                sys.stderr.write("  Amplified sequences:      {}\n".format(self.toFasta))
+            if self.oligoFasta:
+                sys.stderr.write("  Oligo sequences:          {}\n".format(self.oligoFasta))
             sys.stderr.write("\n")
             self.seqman = SequenceManager(self.reference)
             self.genelist.load()
 
             sys.stderr.write("\n\n\x1b[1mLoading target sequences:\x1b[0m\n")
-            badgenes = []
+            self.findGeneCoords()
+            if self.badgenes:
+                rep.badGenes(self.badgenes)
 
-            for g in self.genes:
-                gene = self.genelist.get(g)
-                if gene:
-                    for tx in gene.transcripts:
-                        gnames.append(tx[0])
-                        if tx[4] == '+':
-                            gcoords.append([tx[1], tx[2] - self.upstream - self.field, tx[3] + self.downstream + self.field, tx[4]])
-                        else:
-                            gcoords.append([tx[1], tx[2] - self.downstream - self.field, tx[3] + self.upstream + self.field, tx[4]])
-                        sys.stderr.write("  {:30} {}:{}-{}:{}\n".format(tx[0], tx[1], tx[2], tx[3], tx[4]))
-                else:
-                    badgenes.append(g)
-            if badgenes:
-                rep.badGenes(badgenes)
-
-            self.sequences = self.seqman.getSequences(gcoords) # This will be a list of Sequence objects
+            self.sequences = self.seqman.getSequences(self.gcoords) # This will be a list of Sequence objects
 
             sys.stderr.write("\n\x1b[1mFinding oligo triples - best triple for each sequence:\x1b[0m\n")
             sys.stderr.write("  \x1b[4mGene\x1b[0m                        \x1b[4mSize\x1b[0m    \x1b[4m Oligo 1 \x1b[0m   \x1b[4m Oligo 2 \x1b[0m   \x1b[4m Oligo 3 \x1b[0m\n")
@@ -759,7 +788,7 @@ more gene names, or (if preceded by @) a file containing gene names, one per lin
             badoligos = []
             for i in range(len(self.sequences)):
                 seq = self.sequences[i]
-                seq.name = gnames[i]
+                seq.name = self.gnames[i]
                 if seq.strand == '-':
                     seq.seq = revcomp(seq.seq)
 
@@ -801,6 +830,42 @@ more gene names, or (if preceded by @) a file containing gene names, one per lin
             sys.stderr.write("  Oligo design \x1b[32msuccessful\x1b[0m for \x1b[1m{}\x1b[0m transcripts\n".format(len(self.sequences) - nbad))
             sys.stderr.write("  Oligo design \x1b[31mfailed    \x1b[0m for \x1b[1m{}\x1b[0m transcripts\n".format(nbad))
             sys.stderr.write("\n")
+
+    def findGeneCoords(self):
+        self.badgenes = []
+
+        for g in self.genes:
+            if ":" in g:
+                gname = g.split(":")[0]
+                acc = g
+            else:
+                gname = g
+                acc = None
+            gene = self.genelist.get(gname)
+            if gene:
+                maxlength = 0
+                wanted = []
+                for tx in gene.transcripts:
+                    if acc:                           # If we're interested in a single transcript
+                        if tx[0] == acc:              # and it's this one
+                            wanted.append(tx)         # we're done.
+                            break
+                    elif self.transcripts == "all":   # If we want all of them
+                        wanted.append(tx)             # add this one
+                    else:
+                        length = tx[3] - tx[2]        # If we want the longest one
+                        if length > maxlength:        # and this one is longest
+                            wanted = [tx]             # replace previous one witht his
+
+                for tx in wanted:
+                    self.gnames.append(tx[0])
+                    if tx[4] == '+':
+                        self.gcoords.append([tx[1], tx[2] - self.upstream - self.field, tx[3] + self.downstream + self.field, tx[4]])
+                    else:
+                        self.gcoords.append([tx[1], tx[2] - self.downstream - self.field, tx[3] + self.upstream + self.field, tx[4]])
+                    sys.stderr.write("  {:30} {}:{}-{}:{}\n".format(tx[0], tx[1], tx[2], tx[3], tx[4]))
+            else:
+                self.badgenes.append(g)
 
     def checkHeterodimers(self, rep):
         sys.stderr.write("\n\x1b[1mChecking for potential heterodimers:\x1b[0m\n")
@@ -868,19 +933,22 @@ more gene names, or (if preceded by @) a file containing gene names, one per lin
     def writeFastas(self):
         if self.toFasta is True:
             for seq in self.sequences:
-                seq.write(seq.name + ".fa", label=seq.name + " " + seq.coordinates())
+                if seq.best:
+                    seq.write(seq.name + ".fa", label=seq.name + " " + seq.coordinates(), start=seq.best.oligo1.start, end=seq.best.oligo2.end)
         else:
             with open(self.toFasta, "w") as out:
                 for seq in self.sequences:
-                    seq.writes(out, label=seq.name + " " + seq.coordinates())
+                    if seq.best:
+                        seq.writes(out, label=seq.name + " " + seq.coordinates(), start=seq.best.oligo1.start, end=seq.best.oligo2.end)
 
     def writeOligoFastas(self):
         with open(self.oligoFasta, "w") as out:
             for seq in self.sequences:
                 best = seq.best
-                out.write(">{}_A\n{}\n".format(seq.name, best.oligo1.sequence))
-                out.write(">{}_B\n{}\n".format(seq.name, best.oligo2.sequence))
-                out.write(">{}_C\n{}\n".format(seq.name, best.oligo3.sequence))
+                if best:
+                    out.write(">{}_A\n{}\n".format(seq.name, best.oligo1.sequence))
+                    out.write(">{}_B\n{}\n".format(seq.name, best.oligo2.sequence))
+                    out.write(">{}_C\n{}\n".format(seq.name, best.oligo3.sequence))
 
     # Find optimal oligo length in a sequence giving MT as close as possible to 65 degrees
     # Returns an Oligo object
@@ -896,10 +964,15 @@ more gene names, or (if preceded by @) a file containing gene names, one per lin
             else:
                 oligo = seq[start-l+1:start+1]
             gc = ngc(oligo)
-            gcperc = 1.0 * gc / l
+            gcperc = 100.0 * gc / l
 
             # We want GC% between 40 and 65
-            if gcperc < 0.4 or gcperc > 0.65:
+            if gcperc < self.mingc or gcperc > self.maxgc:
+                continue
+
+            # Count lower-case (i.e. repeatmasked) bases
+            nl = nlower(oligo)
+            if nl >= self.maxprt:
                 continue
 
             # Check hairpin formation
