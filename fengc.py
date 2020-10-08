@@ -972,7 +972,7 @@ more gene names, or (if preceded by @) a file containing gene names, one per lin
 
             # Count lower-case (i.e. repeatmasked) bases
             nl = nlower(oligo)
-            if nl >= self.maxprt:
+            if nl >= self.maxrpt:
                 continue
 
             # Check hairpin formation
