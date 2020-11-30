@@ -855,7 +855,8 @@ more gene names, or (if preceded by @) a file containing gene names, one per lin
                     else:
                         length = tx[3] - tx[2]        # If we want the longest one
                         if length > maxlength:        # and this one is longest
-                            wanted = [tx]             # replace previous one witht his
+                            wanted = [tx]             # replace previous one with this
+                            maxlength = tx[3] - tx[2] # and set new maxlength
 
                 for tx in wanted:
                     self.gnames.append(tx[0])
