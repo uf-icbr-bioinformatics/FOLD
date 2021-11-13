@@ -67,7 +67,9 @@ def nlower(seq):
 def findCandidatePositions(positions, howmany, start, direction):
     """Return `howmany' positions from the list of positions starting at `start' in direction `direction'
 (1 = left to right, -1 = right to left)."""
-    
+    if not positions:
+        return []
+
     # Find first position after `start'
     for i in range(len(positions)):
         if positions[i] >= start:
@@ -176,21 +178,47 @@ class SequenceManager(object):
         self.reference = reference
 
     def getSequences(self, intervals):
-        seqs = []
+        seqs = {}
         proc = sp.Popen("bedtools getfasta -fi {} -bed /dev/stdin".format(self.reference), shell=True, stdin=sp.PIPE, stdout=sp.PIPE)
         for intv in intervals:
+            #sys.stderr.write("{}\n".format(intv))
             proc.stdin.write("{}\t{}\t{}\n".format(intv[0], intv[1], intv[2]).encode('utf-8'))
-        proc.stdin.close()
-        for intv in intervals:
-            name = proc.stdout.readline().decode('utf-8').rstrip("\n")
-            seq = proc.stdout.readline().decode('utf-8').rstrip("\n")
-            s = Sequence(name, seq)
+            seqname = ">{}:{}-{}".format(intv[0], intv[1], intv[2])
+            s = Sequence(seqname, None)
             s.chrom = intv[0]
             s.start = intv[1]
             s.end   = intv[2]
             s.strand = intv[3]
-            seqs.append(s)
-        return seqs
+            seqs[seqname] = s
+        proc.stdin.close()
+
+        while True:
+            name = proc.stdout.readline()
+            if not name:
+                break
+            name = name.decode('utf-8').rstrip("\n")
+            seq = proc.stdout.readline().decode('utf-8').rstrip("\n")
+            s = seqs[name]
+            s.seq = seq
+
+        #sys.stderr.write("{}\n".format(seqs))
+        return list(seqs.values())
+
+# Intervals
+
+class Interval(object):
+    name = ""                   # Source of this interval, e.g. a gene name
+    label = ""                  # chr:start-end
+    chrom = ""
+    start = 0
+    end = 0
+
+    def __init__(self, name, chrom, start, end):
+        self.name = name
+        self.chrom = chrom
+        self.start = start 
+        self.end = end
+        self.label = "{}:{}-{}".format(chrom, start, end)
 
 # Simple Gene DB
 
@@ -218,16 +246,22 @@ one with the same TSS already exists."""
 class GTFParser(object):
     filename = ""
     genes = {}
+    fixChroms = False
 
     def __init__(self, filename):
         self.filename = filename
         self.genes = {}
 
+    def ngenes(self):
+        return len(self.genes)
+
     def fixChrom(self, c):
         if c.startswith("chr"):
             return c
-        else:
+        elif self.fixChroms:
             return "chr" + c
+        else:
+            return c
 
     def getName(self, annots):
         parts = annots.split(";")
@@ -326,6 +360,8 @@ class refFlatParser(GTFParser):
                 name = line[0]
                 txacc = line[1]
                 chrom = self.fixChrom(line[2])
+                if "_" in chrom:
+                    continue
                 strand = line[3]
                 start = int(line[4])
                 end = int(line[5])
@@ -339,6 +375,32 @@ class refFlatParser(GTFParser):
                     sys.stderr.write("\x1b[GLoading transcripts from refFlat file {}: {}".format(self.filename, n))
                     sys.stderr.flush()
         sys.stderr.write("\x1b[GLoading transcripts from refFlat file {}: {} genes, {} transcripts loaded.\n".format(self.filename, len(self.genes), n))
+
+class BEDfileParser(GTFParser):
+
+    def load(self):
+        sys.stderr.write("Loading regions from BED file {}: ".format(self.filename))
+        sys.stderr.flush()
+        n = 0
+        with open(self.filename, "r") as f:
+            c = csv.reader(f, delimiter='\t')
+            for line in c:
+                if not line:
+                    continue
+                if not(line[0]) or line[0][0] == '#':
+                    continue
+                name = line[3]
+                txacc = name
+                chrom = self.fixChrom(line[0])
+                start = int(line[1])
+                end = int(line[2])
+                if name in self.genes:
+                    g = self.genes[name]
+                else:
+                    g = Gene(name, name)
+                    self.genes[name] = g
+                n += g.addTranscript(txacc, chrom, start, end, "+")
+        sys.stderr.write("\x1b[GLoading regions from BED file {}: {} regions loaded.\n".format(self.filename, len(self.genes), n))
 
 ## Reporter
 
@@ -389,12 +451,15 @@ class Main(object):
     oligoFasta = False          # -O
     local = False               # -l If true, skips global optimization.
     transcripts = "all"         # "all" or "longest" - set by -L
+    bedmode = False             # True when input is from a BED file (regions)
+    fixChroms = False           # -c  If True, add "chr" in front of chromosome names in annotations file, if missing
 
     upstream = 400              # -u
     downstream = 100            # -d
     field = 2000                # -s
-    minlength = 8
-    maxlength = 30
+    includeTSS = True           # -nt to disable
+    minlength = 8               # -ol
+    maxlength = 30              # -ol
     minmt = 62                  # -tl
     maxmt = 68                  # -th
     mingc = 40                  # -gc
@@ -410,7 +475,7 @@ class Main(object):
     sizemethod = "s"            # -S Method to weight amplicon size: "s" (size), "t" (targets)
     
     # Computed
-    regsize = 500               # Desired amplicong size
+    regsize = 500               # Desired amplicon size
     regmax = 0                  # Maximum amplicon size
     regmin = 0                  # Minimum amplicon size
     targetA = 0                 # Ideal position of A oligo
@@ -466,6 +531,18 @@ class Main(object):
                         self.mingc = float(parts[0])
                     if parts[1]:
                         self.maxgc = float(parts[1])
+                prev = ""
+            elif prev == "-ol":
+                if "," in a:
+                    parts = a.split(",")
+                    if parts[0]:
+                        self.minlength = int(parts[0])
+                    if parts[1]:
+                        self.maxlength = int(parts[1])
+                else:
+                    v = int(a)
+                    self.minlength = v
+                    self.maxlength = v
                 prev = ""
             elif prev == "-wm":
                 self.weightmt = float(a)
@@ -523,6 +600,10 @@ class Main(object):
                 self.local = True
             elif a == "-L":
                 self.transcripts = "longest"
+            elif a == "-c":
+                self.fixChroms = True
+            elif a == "-nt":
+                self.includeTSS = False
             elif a == "-tm3":
                 if HAS_PRIMER3:
                     self.mt_primer3 = True
@@ -565,8 +646,20 @@ class Main(object):
             self.genelist = GFFParser(path)
         elif ext == ".txt":
             self.genelist = refFlatParser(path)
+        elif ext == ".bed":
+            self.genelist = BEDfileParser(path)
+            self.bedmode = True
+            # Change defaults for -u and -d to 250, unless user has specified one of them.
+            if "-u" in args or "-d" in args:
+                pass
+            else:
+                self.upstream = 250
+                self.downstream = 250
 
-        if self.genes:
+        if self.genelist:
+            self.genelist.fixChroms = self.fixChroms
+
+        if self.genes or self.bedmode:
             return True
         else:
             return self.usage()
@@ -673,6 +766,10 @@ TSS position of a gene.
   set with the best score is chosen as the optimal triple (this can be changed
   later if global optimization is enabled).
 
+* The program forces OligoA to be upstream of the TSS and OligoB to be downstream
+  of it. To remove this constraing (and allow amplicons that do not cover the 
+  TSS) add the -nt option.
+
 """)              
 
         else:
@@ -686,6 +783,7 @@ more gene names, or (if preceded by @) a file containing gene names, one per lin
 
   -g G  | Use gene database G (in GTF or GFF format). Default: a file with the same
           name as the reference file, with extension .gtf or .gff (lower or uppercase).
+  -c    | Add "chr" at the beginning of chromosome names that don't have it.
   -L    | For genes having multiple isoforms, select longest one (default: select all).
   -o O  | Write output to file O (default: standard output).
   -f    | Write target sequences to separate FASTA files.
@@ -698,13 +796,14 @@ more gene names, or (if preceded by @) a file containing gene names, one per lin
   
   -tl L   | Set minimum allowed Tm (default: {}).
   -th H   | Set maximum allowed Tm (default: {}).
+  -ol L,H | Choose oligos in the size range L - H (default {},{}).
   -gc L,H | Set GC range to L - H (default: {},{}).
   -tm3    | Use primer3 method to compute Tm (default: builtin method).
   -pt T   | Limit temperature for hairpin/heterodimers (default: {}).
   -pd D   | Limit Ds for hairpin/heterodimers (default: {}).
   -mr R   | Maximum number of repeat bases (default: {})."
 
-\x1b[1mDesign options (see -h design for details):\x1b[0m
+\x1b[1mDesign options (see -h design and -h size for details):\x1b[0m
 
   -u U  | Number of bp upstream of TSS (default: {}).
   -d D  | Number of bp downstream of TSS (default: {}).
@@ -712,6 +811,7 @@ more gene names, or (if preceded by @) a file containing gene names, one per lin
   -mo O | Maximum % increase of amplicon size (default: {}%).
   -mu U | Maximum % decrease of amplicon size (default: {}%).
   -S A  | Amplicon sizing method, one of `s' or `t' (default: {}).
+  -nt   | Do NOT force amplicon to contain TSS.
 
 \x1b[1mWeight options (see -h weight for details):\x1b[0m
 
@@ -725,6 +825,12 @@ more gene names, or (if preceded by @) a file containing gene names, one per lin
   -n N | Perform N rounds of global optimization (default: {}).
   -l   | Local only - do not perform global optimization.
 
+\x1b[1mMore details:\x1b[0m
+
+  fengc -h design
+  fengc -h size
+  fengc -h weight
+
 \x1b[1mRequirements:\x1b[0m
 
   bedtools
@@ -733,7 +839,7 @@ more gene names, or (if preceded by @) a file containing gene names, one per lin
 
 (c) 2020, University of Florida Research Foundation.
 
-""".format(self.reportfile, self.minmt, self.maxmt, self.mingc, self.maxgc, self.pr3_tm, self.pr3_ds, self.maxrpt, self.upstream, self.downstream, self.field, 
+""".format(self.reportfile, self.minmt, self.maxmt, self.minlength, self.maxlength, self.mingc, self.maxgc, self.pr3_tm, self.pr3_ds, self.maxrpt, self.upstream, self.downstream, self.field, 
            int(self.maxover * 100), int(self.maxunder * 100), self.sizemethod,
            self.weightmt, self.weightlen1, self.weightlen2, 
            self.nrounds))
@@ -751,10 +857,16 @@ more gene names, or (if preceded by @) a file containing gene names, one per lin
             self.targetA = self.field
             self.targetB = self.field + self.regsize
 
-            sys.stderr.write("Input genes:                {}\n".format(len(self.genes)))
-            sys.stderr.write("Transcript selection:       {}\n".format(self.transcripts))
+            if self.bedmode:
+                sys.stderr.write("BED mode                    True\n")
+            else:
+                sys.stderr.write("Input genes:                {}\n".format(len(self.genes)))
+                sys.stderr.write("Transcript selection:       {}\n".format(self.transcripts))
             sys.stderr.write("Amplicon size range:        {} - {}\n".format(self.regmin, self.regmax))
-            sys.stderr.write("Optimal amplicon positions: TSS-{}, TSS+{}\n".format(self.upstream, self.downstream))
+            if self.bedmode:
+                sys.stderr.write("Optimal amplicon positions: CTR-{}, CTR+{}\n".format(self.upstream, self.downstream))
+            else:
+                sys.stderr.write("Optimal amplicon positions: TSS-{}, TSS+{}\n".format(self.upstream, self.downstream))
             sys.stderr.write("Tm range:                   {} - {}\n".format(self.minmt, self.maxmt))
             sys.stderr.write("GC% range:                  {} - {}\n".format(self.mingc, self.maxgc))
             sys.stderr.write("Global optimization:        {}\n".format("disabled" if self.local else "enabled"))
@@ -776,7 +888,7 @@ more gene names, or (if preceded by @) a file containing gene names, one per lin
             self.findGeneCoords()
             if self.badgenes:
                 rep.badGenes(self.badgenes)
-
+            #sys.stderr.write("{}\n".format(self.gcoords))
             self.sequences = self.seqman.getSequences(self.gcoords) # This will be a list of Sequence objects
 
             sys.stderr.write("\n\x1b[1mFinding oligo triples - best triple for each sequence:\x1b[0m\n")
@@ -788,6 +900,12 @@ more gene names, or (if preceded by @) a file containing gene names, one per lin
             badoligos = []
             for i in range(len(self.sequences)):
                 seq = self.sequences[i]
+                if not seq.seq: # Genes for which we don't have a reference sequence are skipped immediately
+                    seq.valid = False
+                    sys.stderr.write("  {:20}  -- no valid oligos found --\n".format(seq.name))
+                    badoligos.append(seq.name)
+                    continue
+
                 seq.name = self.gnames[i]
                 if seq.strand == '-':
                     seq.seq = revcomp(seq.seq)
@@ -802,6 +920,8 @@ more gene names, or (if preceded by @) a file containing gene names, one per lin
                         best.oligo1.mt, int(100*best.oligo1.gcperc), 
                         best.oligo2.mt, int(100*best.oligo2.gcperc), 
                         best.oligo3.mt, int(100*best.oligo3.gcperc)))
+                    #offset = seq.start
+                    #sys.stderr.write("{} - {} - {}\n".format(best.oligo1.start+offset, best.oligo2.start+offset, best.oligo3.start+offset))
                 else:
                     seq.valid = False
                     sys.stderr.write("  {:20}  -- no valid oligos found --\n".format(seq.name))
@@ -834,6 +954,13 @@ more gene names, or (if preceded by @) a file containing gene names, one per lin
     def findGeneCoords(self):
         self.badgenes = []
 
+        if self.bedmode:
+            for gname in self.genelist.genes.keys():
+                tx = self.genelist.get(gname).transcripts[0]
+                midpoint = int((tx[2] + tx[3]) / 2)
+                self.gcoords.append([tx[1], midpoint - self.upstream-self.field, midpoint + self.downstream + self.field, tx[4]])
+                self.gnames.append(tx[0])
+                sys.stderr.write("  {:30} {}:{}-{}:{}\n".format(tx[0], tx[1], midpoint-self.upstream, midpoint+self.downstream, tx[4]))
         for g in self.genes:
             if ":" in g:
                 gname = g.split(":")[0]
@@ -859,6 +986,7 @@ more gene names, or (if preceded by @) a file containing gene names, one per lin
                             maxlength = tx[3] - tx[2] # and set new maxlength
 
                 for tx in wanted:
+                    #sys.stderr.write("{}: TSS = {}\n".format(tx[0], tx[2] if tx[4] == "+" else tx[3]))
                     self.gnames.append(tx[0])
                     if tx[4] == '+':
                         self.gcoords.append([tx[1], tx[2] - self.upstream - self.field, tx[3] + self.downstream + self.field, tx[4]])
@@ -922,6 +1050,7 @@ more gene names, or (if preceded by @) a file containing gene names, one per lin
                     nbad += 1
                     continue
                 best = seq.best
+                #sys.stderr.write("{} - {} - {}\n".format(best.oligo1.start, best.oligo2.start, best.oligo3.start))
                 out.write("{}\t{}\t{}:{:,}-{:,}\t{} {}\t{}\t{}\t{}\t{}\t{:.1f}\t{}\t{}\t{}\t{:.1f}\t{}\t{}\t{}\t{:.1f}\t{}\n".format(
                     seq.name, "F" if seq.strand == "+" else "R", seq.chrom, seq.start, seq.end, 
                     best.oligo1.start+1-self.field-self.upstream, best.oligo2.start+1-self.field-self.upstream,
@@ -935,12 +1064,15 @@ more gene names, or (if preceded by @) a file containing gene names, one per lin
         if self.toFasta is True:
             for seq in self.sequences:
                 if seq.best:
-                    seq.write(seq.name + ".fa", label=seq.name + " " + seq.coordinates(), start=seq.best.oligo1.start, end=seq.best.oligo2.end)
+                    seq.write(seq.name + ".fa", label=seq.name + " " + seq.coordinates(), start=seq.best.oligo1.start+1, end=seq.best.oligo3.end)
+                    #seq.write(seq.name + ".fa", label=seq.name + " " + seq.coordinates(), start=seq.best.oligo1.start, end=seq.best.oligo2.end)
         else:
             with open(self.toFasta, "w") as out:
                 for seq in self.sequences:
                     if seq.best:
-                        seq.writes(out, label=seq.name + " " + seq.coordinates(), start=seq.best.oligo1.start, end=seq.best.oligo2.end)
+                        #sys.stderr.write("{}-{}\n".format(seq.best.oligo1.start+1, seq.best.oligo3.end))
+                        seq.writes(out, label=seq.name + " " + seq.coordinates(), start=seq.best.oligo1.start+1, end=seq.best.oligo3.end)
+                        #seq.writes(out, label=seq.name + " " + seq.coordinates(), start=seq.best.oligo1.start, end=seq.best.oligo2.end)
 
     def writeOligoFastas(self):
         with open(self.oligoFasta, "w") as out:
@@ -1001,12 +1133,22 @@ more gene names, or (if preceded by @) a file containing gene names, one per lin
             return None
 
     def findOptimalOligos(self, seq, regstart, regend):
+        tsspos = regstart + self.upstream
         triples = []
+
         positions = seq.findVT()
+        #sys.stderr.write("{}\n".format((regstart, regend, tsspos)))
         pos1 = findCandidatePositions(positions, self.ncandout, regstart, -1) + findCandidatePositions(positions, self.ncandin, regstart, 1)
         pos1.sort(key=lambda p: abs(regstart - p))
+        #sys.stderr.write("{}\n".format(pos1))
         pos2 = findCandidatePositions(positions, self.ncandout, regend, 1) + findCandidatePositions(positions, self.ncandin, regend, -1)
         pos2.sort(key=lambda p: abs(regend - p))
+        if self.includeTSS:
+            pos1 = [ p for p in pos1 if p < tsspos ]
+            pos2 = [ p for p in pos2 if p > tsspos ]
+
+
+        #sys.stderr.write("{}\n".format(pos2))
         oligos1 = [ self.findOptimalMT(seq.seq, start, 1) for start in pos1 ]
         oligos2 = [ self.findOptimalMT(seq.seq, start, 1) for start in pos2 ]
 
