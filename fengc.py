@@ -2,8 +2,8 @@
 
 import sys
 import os.path
-from numpy import var
 import importlib
+from numpy import var
 
 from fengcUtils import checkBedtools, revcomp
 from fengcClasses import Report, SequenceManager, Sequence
@@ -27,6 +27,7 @@ class Main(object):
     genedb = None               # -g Name of genes DB
     genenames = []              # Names of genes specified on command line
     genes = []                  # List of Gene objects (target)
+    badgenes = []               # Bad genes!
     outfile = "/dev/stdout"     # -o
     reportfile = "report.txt"   # -r
     seqman = None
@@ -49,6 +50,8 @@ class Main(object):
     maxgc = 65                  # -gc
     maxrpt = 6                  # -mr
     mt_primer3 = False          # -tm3 Use primer3-py to compute Tm?
+    calcHairpin = None
+    calcTm = None
     heterodimers = False        # Check for heterodimers formation (only if primer3-py is available)
     pr3_tm = 50                 # Tm for hairpin / heterodimer computation
     pr3_ds = -9                 # ds for hairpin / heterodimer computation
@@ -76,6 +79,7 @@ class Main(object):
     def __init__(self):
         self.genenames = []
         self.genes = []
+        self.badgenes = []
 
     def parseArgs(self, args):
         if "-h" in args or "--help" in args:
@@ -216,8 +220,8 @@ class Main(object):
 
         if self.genenames or self.bedmode:
             return True
-        else:
-            return self.usage()
+
+        return self.usage()
 
     def loadGeneDB(self):
         if self.genedb:
@@ -251,7 +255,7 @@ class Main(object):
 
         if self.genedb:
             self.genedb.fixChroms = self.fixChroms
-        
+        return True
 
     def findGeneDB(self):
         base = os.path.splitext(self.reference)[0]
@@ -437,9 +441,7 @@ more gene names, or (if preceded by @) a file containing gene names, one per lin
     def run(self):
         with open(self.reportfile, "w") as rout:
             rep = Report(rout)
-            #self.gnames = []
             self.badgenes = []
-            #self.gcoords = []
             self.regsize  = self.upstream + self.downstream # Size of target region
             self.regmax = self.regsize + int(self.regsize * self.maxover)
             self.regmin = self.regsize - int(self.regsize * self.maxunder)
@@ -644,7 +646,7 @@ more gene names, or (if preceded by @) a file containing gene names, one per lin
 
     def checkHeterodimersAux(self, o1, o2, g1, g2, hets):
         het_info = primer3.calcHeterodimer(o1.sequence, o2.sequence)
-        if het_info.structure_found == True:
+        if het_info.structure_found:
             #sys.stderr.write("Heterodimer: {} {}\n".format(het_info.ds, het_info.tm))
             if het_info.ds <= self.pr3_ds and het_info.tm >= self.pr3_tm:
                 #print( (g1, o1.sequence, g2, o2.sequence, het_info.tm) )
@@ -669,7 +671,7 @@ more gene names, or (if preceded by @) a file containing gene names, one per lin
                 out.write("{}\t{}\t{}:{:,}-{:,}\t{} {}\t{}\t{}\t{}\t{}\t{:.1f}\t{}\t{}\t{}\t{:.1f}\t{}\t{}\t{}\t{:.1f}\t{}\n".format(
                     gene.name, "F" if gseq.strand == "+" else "R", gseq.chrom, gseq.start, gseq.end, 
                     best.oligo1.start+1-self.field-self.upstream, best.oligo2.start+1-self.field-self.upstream,
-                    best.size, int(100*gseq.bestGC()),
+                    best.size, int(100*gseq.findBestGC()),
                     revcomp(best.oligo1.sequence)+U1, len(best.oligo1.sequence), best.oligo1.mt, int(100*best.oligo1.gcperc),
                     revcomp(best.oligo2.sequence)+U1, len(best.oligo2.sequence), best.oligo2.mt, int(100*best.oligo2.gcperc),
                     U2+revcomp(best.oligo3.sequence), len(best.oligo3.sequence), best.oligo3.mt, int(100*best.oligo3.gcperc)))

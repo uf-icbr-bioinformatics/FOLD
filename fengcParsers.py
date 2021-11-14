@@ -22,10 +22,10 @@ class GTFParser(object):
     def fixChrom(self, c):
         if c.startswith("chr"):
             return c
-        elif self.fixChroms:
+        if self.fixChroms:
             return "chr" + c
-        else:
-            return c
+        #else:
+        return c
 
     def getName(self, annots):
         parts = annots.split(";")
@@ -162,5 +162,5 @@ class BEDfileParser(GTFParser):
                     g = Gene(name, name)
                     self.genes[name] = g
                 n += g.addTranscript(txacc, chrom, start, end, "+")
-        sys.stderr.write("\x1b[GLoading regions from BED file {}: {} regions loaded.\n".format(self.filename, len(self.genes), n))
+        sys.stderr.write("\x1b[GLoading regions from BED file {}: {} regions loaded.\n".format(self.filename, len(self.genes)))
 

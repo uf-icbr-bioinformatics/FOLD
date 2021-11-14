@@ -18,8 +18,8 @@ Computation performed according to Varley et al., see: http://basic.northwestern
     p = -21.597097928022087
     if length < 14:
         return 2*(length - gc) + 4*gc
-    else:
-        return 100.5 + (41.0 * gc / length) - (820.0 / length) + p
+    # else:
+    return 100.5 + (41.0 * gc / length) - (820.0 / length) + p
 
 # Reverse complement
 
@@ -50,13 +50,13 @@ def findCandidatePositions(positions, howmany, start, direction):
     if not positions:
         return []
 
+    i = 0
     # Find first position after `start'
-    for i in range(len(positions)):
-        if positions[i] >= start:
+    for i, p_i in enumerate(positions):
+        if p_i >= start:
             break
     if direction == 1:
         return positions[i:i+howmany]
-    else:
-        p = max(i-howmany, 0)
-        return positions[p:i]
-
+    # else:
+    p = max(i-howmany, 0)
+    return positions[p:i]

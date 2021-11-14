@@ -170,11 +170,12 @@ class Sequence(Interval):
         self.rndtriple = random.choice(self.triples)
         return self.rndtriple
 
-    def bestGC(self):
-        start = self.best.oligo1.start+1
-        end = self.best.oligo2.start+1
-        gc = ngc(self.seq[start:end])
-        self.bestGC = 1.0 * gc / (end-start)
+    def findBestGC(self):
+        if not self.bestGC:
+            start = self.best.oligo1.start+1
+            end = self.best.oligo2.start+1
+            gc = ngc(self.seq[start:end])
+            self.bestGC = 1.0 * gc / (end-start)
         return self.bestGC
 
     def findOptimalOligos(self, regstart, regend, main):
@@ -196,9 +197,6 @@ class Sequence(Interval):
         oligos1 = [ self.findOptimalMT(start, 1, main) for start in pos1 ]
         oligos2 = [ self.findOptimalMT(start, 1, main) for start in pos2 ]
 
-        # Find best pair
-        best = None
-        bestscore = 1e6
         for a in oligos1:
             for b in oligos2:
                 if a and b:
@@ -241,7 +239,7 @@ class Sequence(Interval):
             # Check hairpin formation
             if main.mt_primer3:
                 hairpin_info = main.calcHairpin(oligo)
-                if hairpin_info.structure_found == True:
+                if hairpin_info.structure_found:
                     if hairpin_info.ds <= main.pr3_ds and hairpin_info.tm >= main.pr3_tm:
                         continue
 
@@ -259,8 +257,8 @@ class Sequence(Interval):
 
         if main.minmt <= bestmt <= main.maxmt:
             return Oligo(self.seq, start, direction, bestlen, bestmt)
-        else:
-            return None
+        # else:
+        return None
 
 # Simple Gene DB
 
