@@ -6,7 +6,7 @@ import importlib
 from numpy import var
 
 from fengcUtils import checkBedtools, revcomp
-from fengcClasses import Report, SequenceManager, Sequence
+from fengcClasses import Report, SequenceManager, Sequence, Gene
 import fengcParsers
 
 try:
@@ -552,46 +552,49 @@ more gene names, or (if preceded by @) a file containing gene names, one per lin
         self.badgenes = []
 
         if self.bedmode:
-            for gname in self.genelist.genes.keys():
-                tx = self.genelist.get(gname).transcripts[0]
-                midpoint = int((tx[2] + tx[3]) / 2)
-                self.gcoords.append([tx[1], midpoint - self.upstream-self.field, midpoint + self.downstream + self.field, tx[4]])
-                self.gnames.append(tx[0])
-                sys.stderr.write("  {:30} {}:{}-{}:{}\n".format(tx[0], tx[1], midpoint-self.upstream, midpoint+self.downstream, tx[4]))
-        for g in self.genenames:
-            if ":" in g:
-                gname = g.split(":")[0]
-                acc = g
-            else:
-                gname = g
-                acc = None
-            gene = self.genedb.get(gname)
-            if gene:
-                maxlength = 0
-                wanted = []
-                for tx in gene.transcripts:
-                    if acc:                           # If we're interested in a single transcript
-                        if tx.name == acc:              # and it's this one
-                            wanted.append(tx)         # we're done.
-                            break
-                    elif self.transcripts == "all":   # If we want all of them
-                        wanted.append(tx)             # add this one
-                    else:
-                        if tx.length() > maxlength:   # and this one is longest
-                            wanted = [tx]             # replace previous one with this
-                            maxlength = tx.length()   # and set new maxlength
+            for gname in self.genedb.genes.keys():
+                tx = self.genedb.get(gname).transcripts[0]
+                midpoint = int((tx.end + tx.start) / 2)
+                newgene = Gene(tx.name, tx.name)
+                newgene.transcripts.append(Sequence(tx.name, tx.chrom, midpoint - self.upstream-self.field, midpoint + self.downstream + self.field, strand=tx.strand))
+                self.genes.append(newgene)
+                #self.gnames.append(tx.name)
+                sys.stderr.write("  {:30} {}:{}-{}:{}\n".format(tx.name, tx.chrom, midpoint-self.upstream, midpoint+self.downstream, tx.strand))
+        else:
+            for g in self.genenames:
+                if ":" in g:
+                    gname = g.split(":")[0]
+                    acc = g
+                else:
+                    gname = g
+                    acc = None
+                gene = self.genedb.get(gname)
+                if gene:
+                    maxlength = 0
+                    wanted = []
+                    for tx in gene.transcripts:
+                        if acc:                           # If we're interested in a single transcript
+                            if tx.name == acc:              # and it's this one
+                                wanted.append(tx)         # we're done.
+                                break
+                        elif self.transcripts == "all":   # If we want all of them
+                            wanted.append(tx)             # add this one
+                        else:
+                            if tx.length() > maxlength:   # and this one is longest
+                                wanted = [tx]             # replace previous one with this
+                                maxlength = tx.length()   # and set new maxlength
 
-                for tx in wanted:
-                    #sys.stderr.write("{}: TSS = {}\n".format(tx[0], tx[2] if tx[4] == "+" else tx[3]))
-                    newgene = gene.clone()
-                    self.genes.append(newgene)
-                    if tx.strand == '+':
-                        newgene.transcripts.append(Sequence(tx.name, tx.chrom, tx.start - self.upstream - self.field, tx.end + self.downstream + self.field, strand=tx.strand))
-                    else:
-                        newgene.transcripts.append(Sequence(tx.name, tx.chrom, tx.start - self.downstream - self.field, tx.end + self.upstream + self.field, strand=tx.strand))
-                    sys.stderr.write("  {:30} {}:{}\n".format(tx.name, tx.label, tx.strand))
-            else:
-                self.badgenes.append(g)
+                    for tx in wanted:
+                        #sys.stderr.write("{}: TSS = {}\n".format(tx[0], tx[2] if tx[4] == "+" else tx[3]))
+                        newgene = gene.clone()
+                        self.genes.append(newgene)
+                        if tx.strand == '+':
+                            newgene.transcripts.append(Sequence(tx.name, tx.chrom, tx.start - self.upstream - self.field, tx.end + self.downstream + self.field, strand=tx.strand))
+                        else:
+                            newgene.transcripts.append(Sequence(tx.name, tx.chrom, tx.start - self.downstream - self.field, tx.end + self.upstream + self.field, strand=tx.strand))
+                        sys.stderr.write("  {:30} {}:{}\n".format(tx.name, tx.label, tx.strand))
+                else:
+                    self.badgenes.append(g)
 
     def score(self, t):
         s1 = (t.oligo1.mt - 65)**2

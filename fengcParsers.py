@@ -156,11 +156,15 @@ class BEDfileParser(GTFParser):
                 chrom = self.fixChrom(line[0])
                 start = int(line[1])
                 end = int(line[2])
+                if len(line) > 4:
+                    strand = line[4]
+                else:
+                    strand = "+"
                 if name in self.genes:
                     g = self.genes[name]
                 else:
                     g = Gene(name, name)
                     self.genes[name] = g
-                n += g.addTranscript(txacc, chrom, start, end, "+")
+                n += g.addTranscript(txacc, chrom, start, end, strand)
         sys.stderr.write("\x1b[GLoading regions from BED file {}: {} regions loaded.\n".format(self.filename, len(self.genes)))
 
