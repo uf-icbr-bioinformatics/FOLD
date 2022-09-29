@@ -688,12 +688,14 @@ more gene names, or (if preceded by @) a file containing gene names, one per lin
                     gseq.write(gseq.name + ".fa", label=gseq.name + " " + gseq.coordinates(), start=gseq.best.oligo1.start+1, end=gseq.best.oligo3.end)
                     #seq.write(seq.name + ".fa", label=seq.name + " " + seq.coordinates(), start=seq.best.oligo1.start, end=seq.best.oligo2.end)
         else:
-            with open(self.toFasta, "w") as out:
+            bedfile = os.path.splitext(self.toFasta)[0] + ".bed"
+            with open(self.toFasta, "w") as out, open(bedfile, "w") as bed:
                 for gene in self.genes:
                     gseq = gene.transcripts[0]
                     if gseq.best:
                         #sys.stderr.write("{}-{}\n".format(seq.best.oligo1.start+1, seq.best.oligo3.end))
                         gseq.writes(out, label=gseq.name + " " + gseq.coordinates(), start=gseq.best.oligo1.start+1, end=gseq.best.oligo3.end)
+                        bed.write("{}\t{}\t{}\t{}\n".format(gseq.chrom, gseq.start + gseq.best.oligo1.start+1, gseq.start + gseq.best.oligo3.end, gseq.name))
                         #seq.writes(out, label=seq.name + " " + seq.coordinates(), start=seq.best.oligo1.start, end=seq.best.oligo2.end)
 
     def writeOligoFastas(self):
