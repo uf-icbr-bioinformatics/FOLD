@@ -5,7 +5,7 @@ for one or more target genes. Primers are selected by optimizing a set of local 
 Local constraints apply to each individual target gene, while global constraints aim at ensuring 
 that the resulting PCR fragments have similar sizes.
 
-## Prerequisite
+## Prerequisites
 This program requires `bedtools` to be installed and in PATH. If the `primer3-py` package (available from
 https://pypi.org/project/primer3-py/) is installed, the program will use it to perform Tm calculations,
 otherwise it will fall back on an internal, less accurate method.
@@ -16,7 +16,7 @@ otherwise it will fall back on an internal, less accurate method.
 fengc.py [options] reference genes...
 ```
 
-where `reference' is a FASTA file containing the genome reference, and `genes' is one or
+where `reference` is a FASTA file containing the genome reference, and `genes` is one or
 more gene names, or (if preceded by @) a file containing gene names, one per line.
 
 ## General options:
@@ -78,3 +78,53 @@ Option | Description
   -n N | Perform N rounds of global optimization (default: 1000000).
   -l   | Local only - do not perform global optimization.
 
+## Amplicon design
+
+These are the steps used by FenGC to design an amplicon starting from the
+TSS position of a gene. For each gene, three oligo primers need to be 
+identified (called OligoA, OligoB, and OligoC respectively in the following).
+
+* The `desired amplicon` by default extends from 400bp upstream of the TSS
+  to 100bp downstream of the TSS. These values can be changed with the `-u`
+  and `-d` options respectively.
+
+* The two options `-mo` and `-mu` represent how much the amplicon size is allowed
+  to grow or shrink, in percentage. The default values are 15 and 5, which means
+  that the amplicon size can range from 475bp to 575bp.
+
+* The program looks for all potential oligos around the left and right boundaries
+  of the desired amplicon, and ranks them according to the procedure described in
+  `-h weight'. This is done separately for OligoA, OligoB, and OligoC, and the
+  set with the best score is chosen as the optimal triple (this can be changed
+  later if global optimization is enabled).
+
+* The program forces OligoA to be upstream of the TSS and OligoB to be downstream
+  of it. To remove this constraing (and allow amplicons that do not cover the 
+  TSS) add the `-nt` option.
+
+## Amplicon size weighing example
+
+In this example, the gene TSS is at position 1,000. The desired amplicon extends
+from 400bp upstream of the TSS to 100b downstream, for a total size of 500bp.
+Therefore, t1 is at position 600 and t2 at position 1100.
+
+```
+         t1                                   TSS       t2
+         |              400bp                 |  100bp  |
+---------[####################################+#########]--------
+       ^                                               ^
+       A                                               B
+```
+
+Imagine that OligoA is at position 570, and OligoB at position 1090, with wl=2
+and ws=3. Component E of the weight is computed in the following ways.
+
+If -S is "s":
+
+  Predicted amplicon size is 520, which is larger than the desired size (500),
+  therefore E = 520*2 = 1040.
+
+If -S is "t":
+
+  The distance between A and t1 is 30, and between B and t2 is 10. Therefore
+  E = (30^2)*2 + (10^2)* 2 = 900*2 + 100*3 = 1800 + 300 = 2100.
