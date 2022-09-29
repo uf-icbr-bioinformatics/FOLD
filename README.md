@@ -58,8 +58,7 @@ Option | Description
   -S A  | Amplicon sizing method, one of `s' or `t' (default: s).
   -nt   | Do NOT force amplicon to contain TSS.
 
-See the [Amplicon design](#amplicon-design) section for more details.
--h design and -h size for details):
+See the [Amplicon design](#amplicon-design) and [Amplicon size weighing](#amplicon-size-weighing-example) sections for more details.
 
 ## Weight options
 
@@ -128,4 +127,4 @@ If -S is "s":
 If -S is "t":
 
   The distance between A and t1 is 30, and between B and t2 is 10. Therefore
-  E = (30^2)*2 + (10^2)* 2 = 900*2 + 100*3 = 1800 + 300 = 2100.
+  E = (30^2) * 2 + (10^2) * 2 = 900 * 2 + 100 * 3 = 1800 + 300 = 2100.
