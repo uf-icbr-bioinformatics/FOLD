@@ -69,7 +69,7 @@ Option | Description
   -ws W | Set weight for region length when smaller than target (default: 1.0).
   -w  W | Set both -wl and -ws to W.
 
- (see -h weight for details)
+See the [Optimization weights] section for details.
 
 ## Optimization options:
 
@@ -102,6 +102,43 @@ identified (called OligoA, OligoB, and OligoC respectively in the following).
   of it. To remove this constraing (and allow amplicons that do not cover the 
   TSS) add the `-nt` option.
 
+## Optimization weights
+
+This program tests all possible pairs of candidate oligos at the 5' and 3'
+end of the target sequence, assigning each pair a score, and selects the
+pair with the optimal score. The score is the sum of five components:
+
+  A. Squared difference between Tm for Oligo 1 and 65.
+  B. Squared difference between Tm for Oligo 2 and 65.
+  C. Squared difference between Tm for Oligo 3 and 65.
+  D. Square of the difference between the highest and lowest Tms.
+  E. Amplicon size factor.
+
+The first four components are multiplied by weight `wm`. Component E can be computed 
+in two different ways, depending on the value of the `-S` argument. If the value is 
+"s" (the default), E is the predicted amplicon size (i.e. the distance between the 
+start of Oligo1 and the start of Oligo2) multiplied by `wl` if it is larger than 
+the desired amplicon size, or by `ws` if it is smaller. 
+
+If -S is "t", component E is the square of the distance between the start of Oligo1 
+and the desired amplicon start, multipled by `wl`, plus the square of the distance 
+between the start of Oligo2 and the desired amplicon end, multiplied by `ws`. See
+the [Amplicon size weighing](#amplicon-size-weighing-example) section for an example.
+
+The values of the five components are added together to generate the final score.
+Higher weights mean that the corresponding component has more impact on the choice
+of the optimal pair, while a weight of 0 means that the corresponding component
+has no impact. Examples:
+
+* To select oligos based only on the size of the amplified region, ignoring the MT,
+  use `-wm 0`.
+
+* To avoid producing an amplified region shorter than the desired one, use `-ws 1000`
+  (or any other very large number). This will assign an extremely high penalty
+  to regions shorter than the desired length
+
+
+
 ## Amplicon size weighing example
 
 In this example, the gene TSS is at position 1,000. The desired amplicon extends
@@ -109,6 +146,7 @@ from 400bp upstream of the TSS to 100b downstream, for a total size of 500bp.
 Therefore, t1 is at position 600 and t2 at position 1100.
 
 ```
+         600                                  1000      1100
          t1                                   TSS       t2
          |              400bp                 |  100bp  |
 ---------[####################################+#########]--------
