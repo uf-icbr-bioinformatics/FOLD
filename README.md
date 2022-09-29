@@ -69,7 +69,7 @@ Option | Description
   -ws W | Set weight for region length when smaller than target (default: 1.0).
   -w  W | Set both -wl and -ws to W.
 
-See the [Optimization weights] section for details.
+See the [Optimization weights](#optimization-weights) section for details.
 
 ## Optimization options:
 
@@ -80,7 +80,7 @@ Option | Description
 
 ## Amplicon design
 
-These are the steps used by FenGC to design an amplicon starting from the
+These are the steps used by FOLD to design an amplicon starting from the
 TSS position of a gene. For each gene, three oligo primers need to be 
 identified (called OligoA, OligoB, and OligoC respectively in the following).
 
@@ -94,7 +94,7 @@ identified (called OligoA, OligoB, and OligoC respectively in the following).
 
 * The program looks for all potential oligos around the left and right boundaries
   of the desired amplicon, and ranks them according to the procedure described in
-  `-h weight'. This is done separately for OligoA, OligoB, and OligoC, and the
+  [Optimization weights](#optimization-weights). This is done separately for OligoA, OligoB, and OligoC, and the
   set with the best score is chosen as the optimal triple (this can be changed
   later if global optimization is enabled).
 
@@ -109,9 +109,13 @@ end of the target sequence, assigning each pair a score, and selects the
 pair with the optimal score. The score is the sum of five components:
 
   A. Squared difference between Tm for Oligo 1 and 65.
+
   B. Squared difference between Tm for Oligo 2 and 65.
+
   C. Squared difference between Tm for Oligo 3 and 65.
+
   D. Square of the difference between the highest and lowest Tms.
+
   E. Amplicon size factor.
 
 The first four components are multiplied by weight `wm`. Component E can be computed 
