@@ -1,5 +1,7 @@
 #!/usr/bin/env python
 
+__doc__ = "FENGC Oligonucleotide Designer - FOLD"
+
 import sys
 import os.path
 import importlib
