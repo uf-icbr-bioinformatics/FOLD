@@ -33,7 +33,7 @@ Option | Description
   -r R  | Write report to file R (default: report.txt).
   -D    | Check for potential heterodimers.
 
-## Tm options:
+## Tm options
   
 Option | Description
 -------|------------
@@ -44,7 +44,7 @@ Option | Description
   -tm3    | Use primer3 method to compute Tm (default: builtin method).
   -pt T   | Limit temperature for hairpin/heterodimers (default: 50).
   -pd D   | Limit Ds for hairpin/heterodimers (default: -9).
-  -mr R   | Maximum number of repeat bases (default: 6)."
+  -mr R   | Maximum number of repeat bases (default: 6).
 
 ## Design options
 

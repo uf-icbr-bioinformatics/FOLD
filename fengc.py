@@ -314,13 +314,14 @@ has no impact. Examples:
 
 """)
         elif "size" in args:
-            sys.stdout.write("""\x1b[1mAmplicon size weighting example\x1b[0m
+            sys.stdout.write("""\x1b[1mAmplicon size weighing example\x1b[0m
 
 In this example, the gene TSS is at position 1,000. The desired amplicon extends
 from 400bp upstream of the TSS to 100b downstream, for a total size of 500bp.
 Therefore, t1 is at position 600 and t2 at position 1100.
 
 
+         600                                  1000      1100
          t1                                   TSS       t2
          |              400bp                 |  100bp  |
 ---------[####################################+#########]--------
@@ -396,7 +397,7 @@ more gene names, or (if preceded by @) a file containing gene names, one per lin
   -tm3    | Use primer3 method to compute Tm (default: builtin method).
   -pt T   | Limit temperature for hairpin/heterodimers (default: {}).
   -pd D   | Limit Ds for hairpin/heterodimers (default: {}).
-  -mr R   | Maximum number of repeat bases (default: {})."
+  -mr R   | Maximum number of repeat bases (default: {}).
 
 \x1b[1mDesign options (see -h design and -h size for details):\x1b[0m
 
