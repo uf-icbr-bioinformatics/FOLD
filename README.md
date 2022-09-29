@@ -58,7 +58,8 @@ Option | Description
   -S A  | Amplicon sizing method, one of `s' or `t' (default: s).
   -nt   | Do NOT force amplicon to contain TSS.
 
-see -h design and -h size for details):
+See the [#amplicon-design|Amplicon design] section for more details.
+-h design and -h size for details):
 
 ## Weight options
 
