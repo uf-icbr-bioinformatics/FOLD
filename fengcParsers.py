@@ -60,6 +60,7 @@ class GTFParser(object):
                     names = self.getNames(line[8])
                     g = Gene(names["gene_id"], names["gene_name"])
                     self.genes[g.name] = g
+                    self.genes[g.accession] = g # experimental
                     bytx[g.accession] = g
                 elif line[2] == "transcript":
                     names = self.getNames(line[8])
@@ -73,7 +74,7 @@ class GTFParser(object):
                             sys.stderr.write("\x1b[GLoading transcripts from GTF file {}: {}".format(self.filename, n))
                             sys.stderr.flush()
         sys.stderr.write("\x1b[GLoading transcripts from GTF file {}: {} genes, {} transcripts loaded.\n".format(self.filename, len(self.genes), n))
-
+        
     def get(self, name):
         return self.genes[name] if name in self.genes else None
 
